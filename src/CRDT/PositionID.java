@@ -46,6 +46,35 @@ public class PositionID implements Comparable<PositionID> {
         return siteId;
     }
 
+
+    public static PositionID computePosition(String siteid,PositionID lower, PositionID upper) {
+
+        List<Integer> lowerPath = (lower == null)
+                ? new ArrayList<>() : lower.getFractionalPath();
+        List<Integer> upperPath = (upper == null)
+                ? null : upper.getFractionalPath();
+
+        List<Integer> freshPath = new ArrayList<>();
+        int depth = 0;
+
+        while (true) {
+            int lo = (depth < lowerPath.size())
+                    ? lowerPath.get(depth) : 0;
+            int hi = (upperPath != null && depth < upperPath.size())
+                    ? upperPath.get(depth) : 100;
+
+            if (hi - lo > 1) {
+                freshPath.add((lo + hi) / 2);
+                break;
+            } else {
+                freshPath.add(lo);
+                depth++;
+            }
+        }
+
+        return new PositionID(freshPath, siteid);
+    }
+
     // --- Equals and HashCode (Required for TreeMaps and comparisons) ---
     @Override
     public boolean equals(Object o) {
