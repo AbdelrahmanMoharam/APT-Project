@@ -4,7 +4,6 @@ import java.util.List;
 import java.util.Objects;
 
 public class PositionID implements Comparable<PositionID> {
-    // Using List<Integer> to represent the fractional path shown in the UML
     private List<Integer> fractionalPath;
     private String siteId;
 
@@ -13,31 +12,25 @@ public class PositionID implements Comparable<PositionID> {
         this.siteId = siteId;
     }
 
-    /**
-     * This method is crucial. It dictates the order of characters in the TreeMap.
-     */
     @Override
     public int compareTo(PositionID other) {
         int minLength = Math.min(this.fractionalPath.size(), other.fractionalPath.size());
 
-        // 1. Compare the paths index by index
+
         for (int i = 0; i < minLength; i++) {
             int cmp = Integer.compare(this.fractionalPath.get(i), other.fractionalPath.get(i));
             if (cmp != 0) {
-                return cmp; // We found a difference at this level
+                return cmp;
             }
         }
 
-        // 2. If paths are identical up to the minimum length, the shorter path comes first
         if (this.fractionalPath.size() != other.fractionalPath.size()) {
             return Integer.compare(this.fractionalPath.size(), other.fractionalPath.size());
         }
 
-        // 3. If paths are exactly identical, tie-break using the siteId (User ID)
         return this.siteId.compareTo(other.siteId);
     }
 
-    // --- Getters ---
     public List<Integer> getFractionalPath() {
         return fractionalPath;
     }
@@ -56,12 +49,11 @@ public class PositionID implements Comparable<PositionID> {
 
         List<Integer> freshPath = new ArrayList<>();
         int depth = 0;
-
         while (true) {
             int lo = (depth < lowerPath.size())
                     ? lowerPath.get(depth) : 0;
             int hi = (upperPath != null && depth < upperPath.size())
-                    ? upperPath.get(depth) : 100;
+                    ? upperPath.get(depth) : Integer.MAX_VALUE;
 
             if (hi - lo > 1) {
                 freshPath.add((lo + hi) / 2);
@@ -75,7 +67,7 @@ public class PositionID implements Comparable<PositionID> {
         return new PositionID(freshPath, siteid);
     }
 
-    // --- Equals and HashCode (Required for TreeMaps and comparisons) ---
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
