@@ -111,8 +111,49 @@ public class Document {
         actions.pushLocalAction(op);
         return op;
     }
+    public void applyRemoteOperation(Operation op) {
+        if (op == null) return;
+
+        switch (op.getType()) {
+            case INSERT_BLOCK:
+                // Insert the block exactly where the remote user said
+                if (!blocktree.containsKey(op.getTargetBlockId())) {
+                    blocktree.put(op.getTargetBlockId(), new BlockNode(op.getTargetBlockId()));
+                }
+                break;
+
+            case INSERT_CHAR:
+                BlockNode b = blocktree.get(op.getTargetBlockId());
+                if (b != null) {
+                    b.insertChar(op.getTargetCharId(), op.getValue().charAt(0));
+                }
+                break;
+
+            case DELETE_CHAR:
+                BlockNode bDel = blocktree.get(op.getTargetBlockId());
+                if (bDel != null) {
+                    bDel.deleteChar(op.getTargetCharId());
+                }
+                break;
+
+            case DELETE_BLOCK:
+                BlockNode bRem = blocktree.get(op.getTargetBlockId());
+                if (bRem != null) bRem.markDeleted();
+                break;
 
 
+        }
+    }
+    public String renderText() {
+        StringBuilder sb = new StringBuilder();
+        for (BlockNode block : blocktree.values()) {
+            if (!block.isDeleted()) {
+                sb.append(block.toString());
+                sb.append("\n");
+            }
+        }
+        return sb.toString();
+    }
     public Operation eraseCharacter(PositionID blockPos, PositionID charPos)
     {
         BlockNode block = blocktree.get(blockPos);
