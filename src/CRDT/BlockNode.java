@@ -1,64 +1,96 @@
 package CRDT;
-import java.util.SortedMap;
-import java.util.TreeMap;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 public class BlockNode {
 
     private PositionID blockId;
     private boolean isDeleted;
-    private TreeMap<PositionID, CharNode> characters;
 
+
+    private Map<PositionID, CharNode> nodeMap;
+
+    private List<CharNode> roots;
+    private Map<PositionID, List<CharNode>> pendingChildren;
 
     public BlockNode(PositionID blockId) {
         this.blockId = blockId;
         this.isDeleted = false;
-        this.characters = new TreeMap<>();
+        this.nodeMap = new HashMap<>();
+        this.roots = new ArrayList<>();
+        this.pendingChildren = new HashMap<>();
     }
 
 
-    public void insertChar(PositionID charId, char value) {
-        CharNode newNode = new CharNode(charId, value);
-        characters.put(charId, newNode);
+    public void insertChar(PositionID charId, char value, PositionID parentId) {
+        CharNode newNode = new CharNode(charId, value, parentId);
+        nodeMap.put(charId, newNode);
+
+        if (parentId == null) {
+            roots.add(newNode);
+            roots.sort(null);
+        } else {
+            CharNode parent = nodeMap.get(parentId);
+
+            if (parent != null) {
+                parent.addChild(newNode);
+            } else {
+                pendingChildren
+                        .computeIfAbsent(parentId, k -> new ArrayList<>())
+                        .add(newNode);
+                return;
+            }
+        }
+        attachPendingChildren(charId);
     }
 
     public void deleteChar(PositionID charId) {
-        CharNode node = characters.get(charId);
+        CharNode node = nodeMap.get(charId);
         if (node != null) {
             node.markDeleted();
         }
     }
 
-
-    public BlockNode splitAt(PositionID splitCharId, PositionID newBlockId) {
-        BlockNode newBlock = new BlockNode(newBlockId);
-
-        SortedMap<PositionID, CharNode> tail = characters.tailMap(splitCharId);
-
-        newBlock.characters.putAll(tail);
-
-        tail.clear();
-
-        return newBlock;
-    }
-
-
     public void markDeleted() {
         this.isDeleted = true;
     }
 
-
     public PositionID getBlockId() { return blockId; }
     public boolean isDeleted() { return isDeleted; }
-    public TreeMap<PositionID, CharNode> getCharacters() { return characters; }
 
 
     @Override
     public String toString() {
         if (isDeleted) return "";
-
         StringBuilder sb = new StringBuilder();
-        for (CharNode node : characters.values()) {
-            sb.append(node.toString());
+        for (CharNode root : roots) {
+            dfs(root, sb);
         }
         return sb.toString();
+    }
+
+    // Recursive helper for tree traversal
+    private void dfs(CharNode node, StringBuilder sb) {
+        sb.append(node.toString());
+
+
+        for (CharNode child : node.getChildren()) {
+            dfs(child, sb);
+        }
+    }
+    private void attachPendingChildren(PositionID parentId) {
+        List<CharNode> waiting = pendingChildren.remove(parentId);
+
+        if (waiting != null) {
+            CharNode parent = nodeMap.get(parentId);
+
+            for (CharNode child : waiting) {
+                parent.addChild(child);
+                attachPendingChildren(child.getCharId());
+            }
+        }
     }
 }
