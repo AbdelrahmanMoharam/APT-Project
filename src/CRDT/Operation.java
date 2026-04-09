@@ -1,7 +1,4 @@
 package CRDT;
-import java.io.Serializable;
-
-
 public class Operation
 {
     public enum OpType {
