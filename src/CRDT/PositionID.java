@@ -16,7 +16,7 @@ public class PositionID implements Comparable<PositionID> {
     public int compareTo(PositionID other) {
 
         if (this.clock != other.clock) {
-            return Integer.compare(other.clock, this.clock);
+            return Integer.compare(this.clock, other.clock);
         }
 
         return this.siteId.compareTo(other.siteId);

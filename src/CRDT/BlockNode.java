@@ -31,7 +31,6 @@ public class BlockNode {
 
         if (parentId == null) {
             roots.add(newNode);
-            roots.sort(null);
         } else {
             CharNode parent = nodeMap.get(parentId);
 
@@ -72,7 +71,6 @@ public class BlockNode {
         return sb.toString();
     }
 
-    // Recursive helper for tree traversal
     private void dfs(CharNode node, StringBuilder sb) {
         sb.append(node.toString());
 
@@ -93,12 +91,12 @@ public class BlockNode {
             }
         }
     }
-    // Add this to BlockNode.java
+
     public Map<PositionID, CharNode> getNodeMap() {
         return nodeMap;
     }
 
-    // And this — needed by Document to traverse roots
+
     public List<CharNode> getRoots() {
         return roots;
     }

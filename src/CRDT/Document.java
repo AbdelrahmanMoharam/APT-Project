@@ -582,4 +582,20 @@ public class Document {
     public String getDocumentId() { return documentId; }
     public String getTitle()      { return title; }
     public Map<String, Integer> getUserCursors() { return userCursors; }
+    public PositionID getCharIdAtIndex(PositionID blockId, int index) {
+        BlockNode block = blockSequence.get(blockId);
+        if (block == null) return null;
+
+        List<CharNode> visible = getVisibleChars(block);
+
+        if (index <= 0 || visible.isEmpty()) return null;
+
+        if (index - 1 < visible.size()) {
+            return visible.get(index - 1).getCharId();
+        }
+
+
+        return visible.get(visible.size() - 1).getCharId();
+    }
+
 }

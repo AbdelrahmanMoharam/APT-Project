@@ -5,15 +5,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-public class CharNode {
+public class CharNode implements Comparable<CharNode> {
 
     private PositionID charId;
     private char value;
-    private PositionID parentId; // Added for RGA
+    private PositionID parentId;
     private boolean isDeleted;
     private Set<FormatType> formatting;
 
-    // RGA requires children to be tracked to form the tree
     private List<CharNode> children;
 
     public CharNode(PositionID charId, char value, PositionID parentId) {
@@ -27,9 +26,15 @@ public class CharNode {
     }
 
     public void addChild(CharNode child) {
-        this.children.add(child);
 
-        this.children.sort(null);
+        int index = 0;
+
+        while (index < children.size() &&
+                children.get(index).getCharId().compareTo(child.getCharId()) < 0) {
+            index++;
+        }
+
+        children.add(index, child);
     }
 
     public void markDeleted() { this.isDeleted = true; }
@@ -42,7 +47,11 @@ public class CharNode {
         }
     }
 
-    // --- Getters ---
+    @Override
+    public int compareTo(CharNode other) {
+        return this.charId.compareTo(other.charId);
+    }
+
     public PositionID getCharId() { return charId; }
     public char getValue() { return value; }
     public PositionID getParentId() { return parentId; }
