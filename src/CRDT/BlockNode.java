@@ -93,4 +93,13 @@ public class BlockNode {
             }
         }
     }
+    // Add this to BlockNode.java
+    public Map<PositionID, CharNode> getNodeMap() {
+        return nodeMap;
+    }
+
+    // And this — needed by Document to traverse roots
+    public List<CharNode> getRoots() {
+        return roots;
+    }
 }
