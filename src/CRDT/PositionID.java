@@ -5,13 +5,26 @@ import java.util.Objects;
 public class PositionID implements Comparable<PositionID> {
     private int clock;
     private String siteId;
-
     public PositionID(int clock, String siteId) {
         this.clock = clock;
         this.siteId = siteId;
     }
+    public PositionID(String value) {
+        try {
+            // The value looks like "[1-Server]"
+            // We remove the brackets and split by the dash
+            String clean = value.replace("[", "").replace("]", "");
+            String[] parts = clean.split("-");
 
-
+            this.clock = Integer.parseInt(parts[0]);
+            this.siteId = parts[1];
+        } catch (Exception e) {
+            // Fallback for unexpected formats
+            this.clock = 0;
+            this.siteId = value;
+        }
+    }
+    public PositionID() {}
     @Override
     public int compareTo(PositionID other) {
 

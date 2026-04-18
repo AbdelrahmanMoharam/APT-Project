@@ -1,4 +1,5 @@
 package CRDT;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 public class Operation
 {
     public enum OpType {
@@ -12,13 +13,13 @@ public class Operation
         FORMAT_RANGE
     }
 
-    private final OpType type;
-    private final PositionID targetBlockId;
-    private final PositionID targetCharId;
-    private final String value;
-    private final FormatType format;
+    private  OpType type;
+    private  PositionID targetBlockId;
+    private  PositionID targetCharId;
+    private  String value;
+    private FormatType format;
     private Operation inverseData;
-
+    public Operation() {}
     public Operation(OpType type, PositionID targetBlockId, PositionID targetCharId,
                      String value, FormatType format) {
         this.type = type;
@@ -52,7 +53,11 @@ public class Operation
     public String getValue() { return value; }
     public FormatType getFormat() { return format; }
 
-    public Operation getInverseData() { return inverseData; }
+
+    @JsonIgnore // Add this!
+    public Operation getInverseData() {
+        return inverseData;
+    }
     public void setInverseData(Operation inverseData) { this.inverseData = inverseData; }
 
     @Override

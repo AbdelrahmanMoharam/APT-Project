@@ -11,5 +11,18 @@
     <orderEntry type="library" name="jackson-databind-2.17.0" level="project" />
     <orderEntry type="library" name="jackson-core-2.17.0" level="project" />
     <orderEntry type="library" name="jackson-annotations-2.17.0" level="project" />
+    <orderEntry type="library" name="jackson-annotations-2.17.1" level="project" />
+    <orderEntry type="library" name="jackson-core-2.17.1" level="project" />
+    <orderEntry type="library" name="jackson-databind-2.17.1" level="project" />
+    <orderEntry type="library" name="javax.websocket-api-1.2" level="project" />
+    <orderEntry type="library" name="tyrus-container-grizzly-server-1.17" level="project" />
+    <orderEntry type="library" name="tyrus-core-1.17" level="project" />
+    <orderEntry type="library" name="tyrus-server-1.17" level="project" />
+    <orderEntry type="library" name="tyrus-client-1.17" level="project" />
+    <orderEntry type="library" name="tyrus-spi-1.17" level="project" />
+    <orderEntry type="library" name="grizzly-framework-2.3.22" level="project" />
+    <orderEntry type="library" name="grizzly-http-2.3.22" level="project" />
+    <orderEntry type="library" name="grizzly-http-server-2.3.22" level="project" />
+    <orderEntry type="library" name="tyrus-container-grizzly-client-1.17" level="project" />
   </component>
 </module>
