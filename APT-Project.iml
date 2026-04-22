@@ -11,5 +11,9 @@
     <orderEntry type="library" name="jackson-databind-2.17.0" level="project" />
     <orderEntry type="library" name="jackson-core-2.17.0" level="project" />
     <orderEntry type="library" name="jackson-annotations-2.17.0" level="project" />
+    <orderEntry type="library" name="jackson-annotations-2.17.1" level="project" />
+    <orderEntry type="library" name="jackson-core-2.17.1" level="project" />
+    <orderEntry type="library" name="jackson-databind-2.17.0 (1)" level="project" />
+    <orderEntry type="library" name="javax.websocket-api-1.2" level="project" />
   </component>
 </module>
