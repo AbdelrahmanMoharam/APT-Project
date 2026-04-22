@@ -9,13 +9,13 @@ import CRDT.PositionID;
 import javax.swing.text.*;
 import javax.swing.*;
 import java.awt.*;
-
+import Client.SessionManager;
 
 public class EditorUI {
     private DefaultListModel<String> userListModel;
     private JFrame frame;
     private JTextPane textArea;
-
+    private SessionManager sessionManager;
     private Document document;
 
     // UI Components
@@ -25,7 +25,9 @@ public class EditorUI {
     private JButton boldButton;
     private JButton italicButton;
     private JList<String> userList;
-
+    public void setSessionManager(SessionManager sm) {
+        this.sessionManager = sm;
+    }
     public EditorUI() {
         document = new Document("user1", "doc1", "MyDoc");
         initializeUI();
@@ -176,8 +178,12 @@ public class EditorUI {
 
         // Join button
         joinButton.addActionListener(e -> {
-            String code = joinField.getText();
-            JOptionPane.showMessageDialog(frame, "Joining session: " + code);
+            String code = joinField.getText().trim();
+            if (!code.isEmpty()) {
+                // Create a random name for testing
+                String testUser = "User" + (int)(Math.random() * 100);
+                sessionManager.joinSession(code, testUser, "editor");
+            }
         });
 
         // Bold button

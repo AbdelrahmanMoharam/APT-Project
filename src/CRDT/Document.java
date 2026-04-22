@@ -43,7 +43,7 @@ public class Document {
     // ─────────────────────────────────────────
     // Constructor
     // ─────────────────────────────────────────
-
+    public Document() {}
     public Document(String authorId, String documentId, String title) {
         this.authorId       = authorId;
         this.documentId     = documentId;

@@ -4,7 +4,7 @@ import CRDT.Operation;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-
+import CRDT.Document;
 /**
  * MessageSerializer — the "translator."
  *
@@ -29,29 +29,28 @@ public class MessageSerializer {
         try {
             JsonNode root = mapper.readTree(json);
 
-            // "type" is mandatory on every server frame.
             if (!root.has("type")) {
                 throw new MessageParseException("Missing 'type' field in message: " + json);
             }
-
-            // We treat the type strictly as a String to match your Operation.OpType enum
-            // AND network events (like CURSOR_UPDATE)
             String type = root.get("type").asText().toUpperCase();
+            String userId = root.has("userId") ? root.get("userId").asText() : null;
+            int position = root.has("position") ? root.get("position").asInt() : -1;
 
-            String userId     = root.has("userId")   ? root.get("userId").asText()   : null;
-            int position      = root.has("position") ? root.get("position").asInt()  : -1;
-
-            // If the message has an "op" payload, ask Jackson to turn it directly
-            // into your CRDT.Operation class!
             Operation operation = null;
             if (root.has("op")) {
                 operation = mapper.treeToValue(root.get("op"), Operation.class);
             }
 
-            return new IncomingMessage(type, userId, position, operation);
+            // ════════ ADD THIS PART ════════
+            CRDT.Document document = null;
+            if (root.has("payload")) {
+                document = mapper.treeToValue(root.get("payload"), CRDT.Document.class);
+            }
+            // ═══════════════════════════════
 
-        } catch (MessageParseException e) {
-            throw e; // re-throw as-is
+            // Update the return to include the document
+            return new IncomingMessage(type, userId, position, operation, document);
+
         } catch (Exception e) {
             System.err.println("Failed to deserialize message: " + json);
             e.printStackTrace();
@@ -129,22 +128,26 @@ public class MessageSerializer {
      */
     public static class IncomingMessage {
 
-        private final String    type; // Changed to String to match your OpType enum natively
+        private final String    type;
         private final String    userId;
         private final int       cursorPosition;
-        private final Operation operation; // Strictly uses your CRDT.Operation
+        private final Operation operation;
+        private final CRDT.Document document; // 1. Added this field
 
-        public IncomingMessage(String type, String userId, int cursorPosition, Operation operation) {
+        // 2. Updated this constructor to take 5 arguments
+        public IncomingMessage(String type, String userId, int cursorPosition, Operation operation, CRDT.Document document) {
             this.type           = type;
             this.userId         = userId;
             this.cursorPosition = cursorPosition;
             this.operation      = operation;
+            this.document       = document; // 3. Set the field
         }
 
-        public String    getType()           { return type;           }
-        public String    getUserId()         { return userId;         }
-        public int       getCursorPosition() { return cursorPosition; }
-        public Operation getOperation()      { return operation;      }
+        public String        getType()           { return type;           }
+        public String        getUserId()         { return userId;         }
+        public int           getCursorPosition() { return cursorPosition; }
+        public Operation     getOperation()      { return operation;      }
+        public CRDT.Document getDocument()       { return document;       } // 4. Add this getter
     }
 
     // ══════════════════════════════════════════════════════ checked exceptions

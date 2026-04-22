@@ -122,7 +122,9 @@ public class CollabClient {
                 case "USER_LEFT":
                     sessionManager.onUserLeft(incoming.getUserId());
                     break;
-
+                case "SYNC_STATE": // ADD THIS CASE
+                    sessionManager.syncFullDocument(incoming.getDocument());
+                    break;
                 default:
                     System.err.println("Received unknown message type: " + incoming.getType());
             }

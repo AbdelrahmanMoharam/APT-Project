@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SessionManager {
 
     // ── server base URI template ──────────────────────────────────────────────
+// Check this line! It MUST have the "/ws" part if your launcher has it.
     private static final String WS_BASE_URI = "ws://localhost:8080/collab";
 
     // ═════════════════════════════════════════════════════════════════ state ══
@@ -55,7 +56,16 @@ public class SessionManager {
     }
 
     // ═══════════════════════════════════════════════════════════ session API ══
-
+// Add this method to SessionManager.java
+    public void syncFullDocument(Document remoteDoc) {
+        if (remoteDoc == null) return;
+        synchronized (crdtLock) {
+            this.crdtDocument = remoteDoc;
+        }
+        String content = getCrdtContent(crdtDocument);
+        SwingUtilities.invokeLater(() -> editorUI.onDocumentChanged(content));
+        System.out.println("Document synced with server.");
+    }
     public void joinSession(String documentId, String userId, String role) {
         if (sessionActive) {
             System.err.println("joinSession called while a session is already active — leaving first.");
