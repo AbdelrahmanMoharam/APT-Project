@@ -28,5 +28,11 @@ bin/
 ### Maven ###
 target/
 
+### Local Persistence / DB ###
+data/
+*.db
+*.sqlite
+*.sqlite3
+
 ### Mac OS ###
 .DS_Store
