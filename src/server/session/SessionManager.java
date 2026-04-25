@@ -333,6 +333,13 @@ public class SessionManager {
             }
         }
 
+        UserSession existingUser = session.getUser(userId);
+        if (existingUser != null && existingUser.isConnected()) {
+            sendError(socketSession, session.getSessionId(),
+                    "Username already exists in this session. Please choose another name.");
+            return;
+        }
+
         Session.AttachResult attachResult = session.attachUser(userId, role, socketSession, RECONNECT_WINDOW_MS);
         UserSession userSession = attachResult.getUserSession();
 

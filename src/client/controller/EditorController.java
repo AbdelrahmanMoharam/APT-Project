@@ -17,7 +17,16 @@ import javax.swing.SwingUtilities;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -151,7 +160,7 @@ public class EditorController implements WebSocketClient.Listener {
                 false,
                 false);
 
-        applyOperationLocally(op, true, caret + 1);
+        applyOperationLocally(op, true, true, caret + 1);
     }
 
     private void deleteBeforeCaret() {
@@ -179,7 +188,7 @@ public class EditorController implements WebSocketClient.Listener {
                 node.isBold(),
                 node.isItalic());
 
-        applyOperationLocally(op, true, caret - 1);
+        applyOperationLocally(op, true, true, caret - 1);
     }
 
     private void deleteAtCaret() {
@@ -203,7 +212,7 @@ public class EditorController implements WebSocketClient.Listener {
                 node.isBold(),
                 node.isItalic());
 
-        applyOperationLocally(op, true, caret);
+        applyOperationLocally(op, true, true, caret);
     }
 
     private void splitBlockAtCaret() {
@@ -219,7 +228,7 @@ public class EditorController implements WebSocketClient.Listener {
                 splitIndex,
                 newBlockId);
 
-        applyOperationLocally(split, true, splitIndex);
+        applyOperationLocally(split, true, true, splitIndex);
     }
 
     private void applyFormat(boolean bold, boolean italic) {
@@ -243,7 +252,7 @@ public class EditorController implements WebSocketClient.Listener {
                 bold,
                 italic);
 
-        applyOperationLocally(op, true, selectionEnd);
+        applyOperationLocally(op, true, true, selectionEnd);
     }
 
     private void undoLocal() {
@@ -281,13 +290,52 @@ public class EditorController implements WebSocketClient.Listener {
         }
 
         try {
-            String content = Files.readString(file.toPath());
-            document.importFromTextFormat(content, currentUserId);
-            renderDocumentKeepingCaret(0);
-            ui.showInfo("Document imported from " + file.getName());
+            String content = readImportFileContent(file);
+
+            boolean onlineSession = currentSessionId != null && socketClient.isConnected();
+            if (onlineSession) {
+                if (!editorMode) {
+                    ui.showError("Only editors can import and sync documents.");
+                    return;
+                }
+
+                importIntoCurrentSession(content);
+                ui.showInfo("Document imported and synchronized from " + file.getName());
+            } else {
+                // Offline/local import still works for single-user edits.
+                document.importFromTextFormat(content, currentUserId);
+                renderDocumentKeepingCaret(0);
+                ui.showInfo("Document imported locally from " + file.getName());
+            }
         } catch (Exception e) {
             ui.showError("Import failed: " + e.getMessage());
         }
+    }
+
+    private String readImportFileContent(File file) throws IOException {
+        byte[] bytes = Files.readAllBytes(file.toPath());
+
+        List<Charset> candidates = List.of(
+                StandardCharsets.UTF_8,
+                StandardCharsets.UTF_16,
+                StandardCharsets.UTF_16LE,
+                StandardCharsets.UTF_16BE,
+                Charset.forName("windows-1252"),
+                StandardCharsets.ISO_8859_1,
+                Charset.defaultCharset());
+
+        for (Charset charset : candidates) {
+            try {
+                CharsetDecoder decoder = charset.newDecoder();
+                decoder.onMalformedInput(CodingErrorAction.REPORT);
+                decoder.onUnmappableCharacter(CodingErrorAction.REPORT);
+                return decoder.decode(ByteBuffer.wrap(bytes)).toString();
+            } catch (CharacterCodingException ignored) {
+                // Try next charset.
+            }
+        }
+
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private void exportDocument() {
@@ -298,14 +346,131 @@ public class EditorController implements WebSocketClient.Listener {
 
         try {
             String output = document.exportToTextFormat();
-            Files.writeString(file.toPath(), output);
-            ui.showInfo("Document exported to " + file.getName());
+
+            String fileName = file.getName().toLowerCase();
+            File outputFile = fileName.endsWith(".txt")
+                    ? file
+                    : new File(file.getParentFile(), file.getName() + ".txt");
+
+            Files.writeString(outputFile.toPath(), output);
+            ui.showInfo("Document exported to " + outputFile.getName());
         } catch (Exception e) {
             ui.showError("Export failed: " + e.getMessage());
         }
     }
 
-    private void applyOperationLocally(Operation operation, boolean trackUndo, int desiredCaret) {
+    private void importIntoCurrentSession(String importedContent) {
+        List<Operation> operations = buildImportOperations(importedContent);
+        applyBulkOperationsLocally(operations, false, true, 0);
+    }
+
+    private List<Operation> buildImportOperations(String importedContent) {
+        List<Operation> operations = new ArrayList<>();
+
+        Document importedSnapshot = new Document(document.getDocumentId(), document.getTitle());
+        importedSnapshot.importFromTextFormat(importedContent, currentUserId);
+
+        List<Block> currentBlocks = new ArrayList<>(document.getBlockCRDT().getVisibleBlocks());
+        String primaryBlockId;
+
+        if (currentBlocks.isEmpty()) {
+            primaryBlockId = "block-0";
+            operations.add(Operation.BlockOp.insert(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    primaryBlockId,
+                    0));
+        } else {
+            primaryBlockId = currentBlocks.get(0).getBlockId();
+        }
+
+        // Step 1: clear all current characters using tombstones.
+        for (Block block : currentBlocks) {
+            List<Node> existingNodes = new ArrayList<>(block.getCharTree().getVisibleNodesInOrder());
+            for (Node node : existingNodes) {
+                operations.add(new DeleteOp(
+                        currentSessionId,
+                        currentUserId,
+                        System.currentTimeMillis(),
+                        block.getBlockId(),
+                        node.getId(),
+                        normalizeParent(node.getParentId()),
+                        node.getValue(),
+                        node.isBold(),
+                        node.isItalic()));
+            }
+        }
+
+        // Step 2: remove extra blocks, keeping the first block as the base.
+        for (int i = currentBlocks.size() - 1; i >= 1; i--) {
+            Block block = currentBlocks.get(i);
+            operations.add(Operation.BlockOp.delete(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    block.getBlockId(),
+                    i));
+        }
+
+        List<Block> importedBlocks = new ArrayList<>(importedSnapshot.getBlockCRDT().getVisibleBlocks());
+        if (importedBlocks.isEmpty()) {
+            return operations;
+        }
+
+        long baseTimestamp = System.currentTimeMillis();
+
+        // Step 3: write first imported block into the existing first block.
+        appendBlockCharsAsInsertOps(operations, importedBlocks.get(0), primaryBlockId, baseTimestamp);
+
+        // Step 4: create additional blocks and populate them.
+        for (int i = 1; i < importedBlocks.size(); i++) {
+            String newBlockId = "block-" + baseTimestamp + "-" + i + "-" + localSequence.incrementAndGet();
+            operations.add(Operation.BlockOp.insert(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    newBlockId,
+                    i));
+
+            appendBlockCharsAsInsertOps(operations, importedBlocks.get(i), newBlockId, baseTimestamp);
+        }
+
+        return operations;
+    }
+
+    private void appendBlockCharsAsInsertOps(List<Operation> output,
+                                             Block sourceBlock,
+                                             String targetBlockId,
+                                             long baseTimestamp) {
+        String parentId = null;
+        List<Node> sourceNodes = new ArrayList<>(sourceBlock.getCharTree().getVisibleNodesInOrder());
+
+        for (Node node : sourceNodes) {
+            String newNodeId = Node.buildId(
+                    currentUserId,
+                    baseTimestamp,
+                    localSequence.incrementAndGet());
+
+            output.add(new InsertOp(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    targetBlockId,
+                    newNodeId,
+                    parentId,
+                    node.getValue(),
+                    node.isBold(),
+                    node.isItalic()));
+
+            parentId = newNodeId;
+        }
+    }
+
+    private void applyOperationLocally(Operation operation,
+                                       boolean trackUndo,
+                                       boolean sendToServer,
+                                       int desiredCaret) {
         if (operation == null) {
             return;
         }
@@ -318,9 +483,31 @@ public class EditorController implements WebSocketClient.Listener {
 
         renderDocumentKeepingCaret(desiredCaret);
 
-        if (trackUndo) {
+        if (sendToServer) {
             socketClient.sendOperation(operation);
         }
+    }
+
+    private void applyBulkOperationsLocally(List<Operation> operations,
+                                            boolean trackUndo,
+                                            boolean sendToServer,
+                                            int desiredCaret) {
+        if (operations == null || operations.isEmpty()) {
+            renderDocumentKeepingCaret(desiredCaret);
+            return;
+        }
+
+        for (Operation operation : operations) {
+            operation.apply(document);
+            if (trackUndo) {
+                undoRedoManager.recordLocalOperation(operation);
+            }
+            if (sendToServer) {
+                socketClient.sendOperation(operation);
+            }
+        }
+
+        renderDocumentKeepingCaret(desiredCaret);
     }
 
     private void renderDocumentKeepingCaret(int desiredCaret) {
@@ -357,6 +544,7 @@ public class EditorController implements WebSocketClient.Listener {
     public void onDisconnected(String reason) {
         SwingUtilities.invokeLater(() -> {
             editorMode = false;
+            currentSessionId = null;
             ui.setEditorMode(false);
             ui.setStatus("Disconnected: " + reason);
         });

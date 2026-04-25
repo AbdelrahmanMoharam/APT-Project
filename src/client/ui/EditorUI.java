@@ -6,6 +6,7 @@ import client.model.Document;
 import client.network.WebSocketClient;
 
 import javax.swing.DefaultListModel;
+import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -25,6 +26,8 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,6 +43,11 @@ public class EditorUI {
     private final JPanel shareCodesPanel;
     private final JLabel editorCodeLabel;
     private final JLabel viewerCodeLabel;
+    private final JButton copyEditorCodeButton;
+    private final JButton copyViewerCodeButton;
+
+    private String editorCodeValue = "";
+    private String viewerCodeValue = "";
 
     private final DefaultListModel<String> activeUsersModel;
     private final JList<String> activeUsersList;
@@ -64,6 +72,8 @@ public class EditorUI {
         this.shareCodesPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         this.editorCodeLabel = new JLabel("Editor Code: -");
         this.viewerCodeLabel = new JLabel("Viewer Code: -");
+        this.copyEditorCodeButton = new JButton("Copy Editor Code");
+        this.copyViewerCodeButton = new JButton("Copy Viewer Code");
 
         this.activeUsersModel = new DefaultListModel<>();
         this.activeUsersList = new JList<>(activeUsersModel);
@@ -79,7 +89,12 @@ public class EditorUI {
         frame.setLayout(new BorderLayout());
 
         shareCodesPanel.add(editorCodeLabel);
+        shareCodesPanel.add(copyEditorCodeButton);
         shareCodesPanel.add(viewerCodeLabel);
+        shareCodesPanel.add(copyViewerCodeButton);
+
+        copyEditorCodeButton.addActionListener(event -> copyToClipboard(editorCodeValue, "Editor code"));
+        copyViewerCodeButton.addActionListener(event -> copyToClipboard(viewerCodeValue, "Viewer code"));
 
         JPanel top = new JPanel(new BorderLayout());
         top.add(toolbar, BorderLayout.CENTER);
@@ -119,8 +134,14 @@ public class EditorUI {
     }
 
     public void setShareCodes(String editorCode, String viewerCode) {
-        editorCodeLabel.setText("Editor Code: " + (editorCode == null ? "-" : editorCode));
-        viewerCodeLabel.setText("Viewer Code: " + (viewerCode == null ? "-" : viewerCode));
+        editorCodeValue = editorCode == null ? "" : editorCode;
+        viewerCodeValue = viewerCode == null ? "" : viewerCode;
+
+        editorCodeLabel.setText("Editor Code: " + (editorCodeValue.isBlank() ? "-" : editorCodeValue));
+        viewerCodeLabel.setText("Viewer Code: " + (viewerCodeValue.isBlank() ? "-" : viewerCodeValue));
+
+        copyEditorCodeButton.setEnabled(!editorCodeValue.isBlank());
+        copyViewerCodeButton.setEnabled(!viewerCodeValue.isBlank());
     }
 
     public void setStatus(String status) {
@@ -235,6 +256,19 @@ public class EditorUI {
 
     public void showError(String message) {
         JOptionPane.showMessageDialog(frame, message, "Error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void copyToClipboard(String value, String label) {
+        if (value == null || value.isBlank()) {
+            showError(label + " is not available yet.");
+            return;
+        }
+
+        Toolkit.getDefaultToolkit()
+                .getSystemClipboard()
+                .setContents(new StringSelection(value), null);
+
+        setStatus(label + " copied to clipboard");
     }
 
     public Map<String, Integer> collectKnownCursorPositions(List<WebSocketClient.UserPresence> users) {
