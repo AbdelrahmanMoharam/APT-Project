@@ -66,7 +66,9 @@ public class WebSocketClient {
         this.userId = userId;
 
         ObjectNode payload = mapper.createObjectNode();
-        payload.put("title", title == null || title.isBlank() ? "Untitled Document" : title);
+        String documentName = title == null || title.isBlank() ? "Untitled Document" : title;
+        payload.put("name", documentName);
+        payload.put("title", documentName);
 
         ObjectNode root = mapper.createObjectNode();
         root.put("type", "CREATE_SESSION");

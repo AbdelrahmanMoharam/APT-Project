@@ -1,11 +1,15 @@
 package client.operations;
 
+import client.crdt.BlockCRDT;
 import client.model.Document;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 public abstract class Operation {
@@ -109,9 +113,74 @@ public abstract class Operation {
                         readInt(payload, 0, "targetIndex", "index"),
                         readInt(payload, -1, "previousIndex"));
 
+            case "COPY_BLOCK":
+                return BlockOp.copyBlock(
+                        sessionId,
+                        userId,
+                        timestamp,
+                        readText(payload, "sourceBlockId"),
+                        readText(payload, "targetBlockId", "blockId"),
+                        readInt(payload, Integer.MAX_VALUE, "targetIndex", "index"));
+
+            case "MODIFY_BLOCK_CONTENT":
+                return BlockOp.modifyBlockContent(
+                        sessionId,
+                        userId,
+                        timestamp,
+                        readText(payload, "targetBlockId", "blockId"),
+                        readBlockContent(payload == null ? null : payload.path("content"), userId, timestamp),
+                        readBoolean(payload, false, "append"));
+
+            case "COPY_BLOCK_CONTENT":
+                return BlockOp.copyBlockContent(
+                        sessionId,
+                        userId,
+                        timestamp,
+                        readText(payload, "sourceBlockId"),
+                        readText(payload, "targetBlockId", "blockId"),
+                        readBlockContent(payload == null ? null : payload.path("content"), userId, timestamp),
+                        readBoolean(payload, true, "append"));
+
             default:
                 return null;
         }
+    }
+
+    private static List<BlockCRDT.CharacterAtom> readBlockContent(JsonNode contentNode,
+                                                                  String userId,
+                                                                  long timestamp) {
+        if (contentNode == null || !contentNode.isArray()) {
+            return List.of();
+        }
+
+        List<BlockCRDT.CharacterAtom> content = new ArrayList<>();
+        int index = 0;
+
+        for (JsonNode item : contentNode) {
+            if (item == null || item.isNull()) {
+                continue;
+            }
+
+            String valueAsText = readText(item, "value");
+            char value = valueAsText == null || valueAsText.isEmpty() ? '\0' : valueAsText.charAt(0);
+            if (value == '\0') {
+                continue;
+            }
+
+            String nodeId = readText(item, "nodeId");
+            if (nodeId == null || nodeId.isBlank()) {
+                String safeUser = userId == null || userId.isBlank() ? "system" : userId;
+                nodeId = safeUser + ":" + timestamp + ":" + index;
+            }
+
+            boolean bold = readBoolean(item, false, "bold");
+            boolean italic = readBoolean(item, false, "italic");
+
+            content.add(new BlockCRDT.CharacterAtom(nodeId, value, bold, italic));
+            index++;
+        }
+
+        return content;
     }
 
     protected static String readText(JsonNode node, String... keys) {
@@ -252,7 +321,10 @@ public abstract class Operation {
             INSERT_BLOCK,
             DELETE_BLOCK,
             SPLIT_BLOCK,
-            MOVE_BLOCK
+            MOVE_BLOCK,
+            COPY_BLOCK,
+            MODIFY_BLOCK_CONTENT,
+            COPY_BLOCK_CONTENT
         }
 
         private final Action action;
@@ -261,6 +333,9 @@ public abstract class Operation {
         private final int previousIndex;
         private final int splitIndex;
         private final String newBlockId;
+        private final String sourceBlockId;
+        private final List<BlockCRDT.CharacterAtom> content;
+        private final boolean appendContent;
 
         private BlockOp(String sessionId,
                         String userId,
@@ -270,7 +345,10 @@ public abstract class Operation {
                         int targetIndex,
                         int previousIndex,
                         int splitIndex,
-                        String newBlockId) {
+                        String newBlockId,
+                        String sourceBlockId,
+                        List<BlockCRDT.CharacterAtom> content,
+                        boolean appendContent) {
             super(sessionId, userId, timestamp);
             this.action = action;
             this.blockId = blockId;
@@ -278,14 +356,17 @@ public abstract class Operation {
             this.previousIndex = previousIndex;
             this.splitIndex = splitIndex;
             this.newBlockId = newBlockId;
+            this.sourceBlockId = sourceBlockId;
+            this.content = content == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(content));
+            this.appendContent = appendContent;
         }
 
         public static BlockOp insert(String sessionId, String userId, long timestamp, String blockId, int targetIndex) {
-            return new BlockOp(sessionId, userId, timestamp, Action.INSERT_BLOCK, blockId, targetIndex, -1, -1, null);
+            return new BlockOp(sessionId, userId, timestamp, Action.INSERT_BLOCK, blockId, targetIndex, -1, -1, null, null, null, false);
         }
 
         public static BlockOp delete(String sessionId, String userId, long timestamp, String blockId, int targetIndex) {
-            return new BlockOp(sessionId, userId, timestamp, Action.DELETE_BLOCK, blockId, targetIndex, -1, -1, null);
+            return new BlockOp(sessionId, userId, timestamp, Action.DELETE_BLOCK, blockId, targetIndex, -1, -1, null, null, null, false);
         }
 
         public static BlockOp split(String sessionId,
@@ -294,7 +375,7 @@ public abstract class Operation {
                                     String blockId,
                                     int splitIndex,
                                     String newBlockId) {
-            return new BlockOp(sessionId, userId, timestamp, Action.SPLIT_BLOCK, blockId, -1, -1, splitIndex, newBlockId);
+            return new BlockOp(sessionId, userId, timestamp, Action.SPLIT_BLOCK, blockId, -1, -1, splitIndex, newBlockId, null, null, false);
         }
 
         public static BlockOp move(String sessionId,
@@ -303,7 +384,35 @@ public abstract class Operation {
                                    String blockId,
                                    int targetIndex,
                                    int previousIndex) {
-            return new BlockOp(sessionId, userId, timestamp, Action.MOVE_BLOCK, blockId, targetIndex, previousIndex, -1, null);
+            return new BlockOp(sessionId, userId, timestamp, Action.MOVE_BLOCK, blockId, targetIndex, previousIndex, -1, null, null, null, false);
+        }
+
+        public static BlockOp copyBlock(String sessionId,
+                                        String userId,
+                                        long timestamp,
+                                        String sourceBlockId,
+                                        String newBlockId,
+                                        int targetIndex) {
+            return new BlockOp(sessionId, userId, timestamp, Action.COPY_BLOCK, newBlockId, targetIndex, -1, -1, null, sourceBlockId, null, false);
+        }
+
+        public static BlockOp modifyBlockContent(String sessionId,
+                                                 String userId,
+                                                 long timestamp,
+                                                 String targetBlockId,
+                                                 List<BlockCRDT.CharacterAtom> content,
+                                                 boolean append) {
+            return new BlockOp(sessionId, userId, timestamp, Action.MODIFY_BLOCK_CONTENT, targetBlockId, -1, -1, -1, null, null, content, append);
+        }
+
+        public static BlockOp copyBlockContent(String sessionId,
+                                               String userId,
+                                               long timestamp,
+                                               String sourceBlockId,
+                                               String targetBlockId,
+                                               List<BlockCRDT.CharacterAtom> content,
+                                               boolean append) {
+            return new BlockOp(sessionId, userId, timestamp, Action.COPY_BLOCK_CONTENT, targetBlockId, -1, -1, -1, null, sourceBlockId, content, append);
         }
 
         @Override
@@ -331,6 +440,23 @@ public abstract class Operation {
                     break;
                 case MOVE_BLOCK:
                     document.getBlockCRDT().moveBlock(blockId, targetIndex);
+                    break;
+                case COPY_BLOCK:
+                    document.getBlockCRDT().copyBlock(sourceBlockId, blockId, targetIndex);
+                    break;
+                case MODIFY_BLOCK_CONTENT:
+                    if (appendContent) {
+                        document.getBlockCRDT().appendBlockContent(blockId, content);
+                    } else {
+                        document.getBlockCRDT().replaceBlockContent(blockId, content);
+                    }
+                    break;
+                case COPY_BLOCK_CONTENT:
+                    if (appendContent) {
+                        document.getBlockCRDT().appendBlockContent(blockId, content);
+                    } else {
+                        document.getBlockCRDT().replaceBlockContent(blockId, content);
+                    }
                     break;
                 default:
                     break;
@@ -360,6 +486,11 @@ public abstract class Operation {
                             blockId,
                             previousIndex,
                             targetIndex);
+                case COPY_BLOCK:
+                    return delete(getSessionId(), getUserId(), System.currentTimeMillis(), blockId, targetIndex);
+                case MODIFY_BLOCK_CONTENT:
+                case COPY_BLOCK_CONTENT:
+                    return null;
                 default:
                     return null;
             }
@@ -379,6 +510,22 @@ public abstract class Operation {
             }
             if (newBlockId != null) {
                 opNode.put("newBlockId", newBlockId);
+            }
+            if (sourceBlockId != null) {
+                opNode.put("sourceBlockId", sourceBlockId);
+            }
+            if (!content.isEmpty()) {
+                opNode.putArray("content").addAll(content.stream().map(atom -> {
+                    ObjectNode entry = opNode.objectNode();
+                    entry.put("nodeId", atom.nodeId());
+                    entry.put("value", String.valueOf(atom.value()));
+                    entry.put("bold", atom.bold());
+                    entry.put("italic", atom.italic());
+                    return entry;
+                }).toList());
+            }
+            if (action == Action.MODIFY_BLOCK_CONTENT || action == Action.COPY_BLOCK_CONTENT) {
+                opNode.put("append", appendContent);
             }
         }
     }

@@ -34,5 +34,8 @@ data/
 *.sqlite
 *.sqlite3
 
+# Local secrets/config
+.env
+
 ### Mac OS ###
 .DS_Store

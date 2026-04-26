@@ -9,6 +9,9 @@ import java.util.Map;
 
 public class BlockCRDT {
 
+    public record CharacterAtom(String nodeId, char value, boolean bold, boolean italic) {
+    }
+
     private final Map<String, Block> blockById = new HashMap<>();
     private final List<String> order = new ArrayList<>();
 
@@ -53,6 +56,56 @@ public class BlockCRDT {
         order.add(clampIndex(targetIndex), blockId);
     }
 
+    public synchronized Block copyBlock(String sourceBlockId, String newBlockId, int targetIndex) {
+        Block source = blockById.get(sourceBlockId);
+        if (source == null || source.isDeleted() || newBlockId == null) {
+            return null;
+        }
+
+        Block copy = insertBlock(newBlockId, targetIndex);
+        copy.getCharTree().clear();
+
+        List<Node> sourceNodes = source.getCharTree().getVisibleNodesInOrder();
+        String parentId = null;
+        for (Node node : sourceNodes) {
+            copy.getCharTree().insert(node.getId(), parentId, node.getValue(), node.isBold(), node.isItalic());
+            parentId = node.getId();
+        }
+
+        return copy;
+    }
+
+    public synchronized void replaceBlockContent(String blockId, List<CharacterAtom> content) {
+        Block target = getOrCreateBlock(blockId);
+        target.getCharTree().clear();
+
+        appendBlockContent(blockId, content);
+    }
+
+    public synchronized void appendBlockContent(String blockId, List<CharacterAtom> content) {
+        if (content == null || content.isEmpty()) {
+            return;
+        }
+
+        Block target = getOrCreateBlock(blockId);
+        List<Node> existingVisible = target.getCharTree().getVisibleNodesInOrder();
+        String parentId = existingVisible.isEmpty() ? null : existingVisible.get(existingVisible.size() - 1).getId();
+
+        for (CharacterAtom atom : content) {
+            if (atom == null || atom.nodeId() == null) {
+                continue;
+            }
+
+            target.getCharTree().insert(
+                    atom.nodeId(),
+                    parentId,
+                    atom.value(),
+                    atom.bold(),
+                    atom.italic());
+            parentId = atom.nodeId();
+        }
+    }
+
     public synchronized Block splitBlock(String sourceBlockId, int splitVisibleIndex, String newBlockId) {
         Block source = blockById.get(sourceBlockId);
         if (source == null || source.isDeleted()) {
@@ -94,6 +147,10 @@ public class BlockCRDT {
             return visible.get(0);
         }
         return insertBlock("block-0", 0);
+    }
+
+    public synchronized int getVisibleIndex(String blockId) {
+        return order.indexOf(blockId);
     }
 
     public synchronized List<Block> getVisibleBlocks() {

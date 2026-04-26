@@ -38,6 +38,9 @@ public class SessionManager {
             "DELETE_BLOCK",
             "SPLIT_BLOCK",
             "MOVE_BLOCK",
+            "COPY_BLOCK",
+            "MODIFY_BLOCK_CONTENT",
+            "COPY_BLOCK_CONTENT",
             "FORMAT_CHAR",
             "FORMAT_RANGE");
 
@@ -213,7 +216,7 @@ public class SessionManager {
         }
 
         if (!persistedSessions.isEmpty()) {
-            System.out.println("Restored sessions from disk: " + persistedSessions.size());
+            System.out.println("Restored sessions from persistence: " + persistedSessions.size());
         }
     }
 
@@ -233,22 +236,24 @@ public class SessionManager {
 
         String sessionId = shortId();
         String documentId = sessionId;
-        String title = "Untitled Document";
+        String name = "Untitled Document";
 
         JsonNode payload = message.getPayload();
         if (payload != null) {
             if (payload.hasNonNull("documentId")) {
                 documentId = payload.get("documentId").asText();
             }
-            if (payload.hasNonNull("title")) {
-                title = payload.get("title").asText();
+            if (payload.hasNonNull("name")) {
+                name = payload.get("name").asText();
+            } else if (payload.hasNonNull("title")) {
+                name = payload.get("title").asText();
             }
         }
 
         String editorCode = codeManager.generateCode(sessionId, UserSession.Role.EDITOR);
         String viewerCode = codeManager.generateCode(sessionId, UserSession.Role.VIEWER);
 
-        Session session = new Session(sessionId, documentId, editorCode, viewerCode, title);
+        Session session = new Session(sessionId, documentId, editorCode, viewerCode, name);
         sessions.put(sessionId, session);
 
         Session.AttachResult attachResult = session.attachUser(

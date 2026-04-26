@@ -14,11 +14,11 @@ public class Document {
     private final BlockCRDT blockCRDT;
 
     private String documentId;
-    private String title;
+    private String name;
 
-    public Document(String documentId, String title) {
+    public Document(String documentId, String name) {
         this.documentId = documentId;
-        this.title = title;
+        this.name = name;
         this.blockCRDT = new BlockCRDT();
     }
 
@@ -30,12 +30,20 @@ public class Document {
         this.documentId = documentId;
     }
 
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
     public String getTitle() {
-        return title;
+        return getName();
     }
 
     public void setTitle(String title) {
-        this.title = title;
+        setName(title);
     }
 
     public BlockCRDT getBlockCRDT() {

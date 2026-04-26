@@ -1,6 +1,7 @@
 package client.controller;
 
 import client.crdt.CharacterCRDT;
+import client.crdt.BlockCRDT;
 import client.crdt.Node;
 import client.model.Block;
 import client.model.Document;
@@ -14,6 +15,8 @@ import client.undo.UndoRedoManager;
 
 import javax.swing.JTextPane;
 import javax.swing.SwingUtilities;
+import java.awt.Toolkit;
+import java.awt.datatransfer.DataFlavor;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.io.File;
@@ -47,6 +50,8 @@ public class EditorController implements WebSocketClient.Listener {
     private volatile boolean editorMode = false;
 
     private volatile boolean suppressLocalInput = false;
+    private volatile String copiedBlockId;
+    private volatile List<BlockCRDT.CharacterAtom> copiedBlockContent = List.of();
 
     public EditorController(EditorUI ui, String serverEndpoint) {
         this.ui = ui;
@@ -120,6 +125,60 @@ public class EditorController implements WebSocketClient.Listener {
                     return;
                 }
 
+                if (e.isControlDown() && e.isShiftDown() && e.getKeyCode() == KeyEvent.VK_C) {
+                    e.consume();
+                    copyCurrentBlock();
+                    return;
+                }
+
+                if (e.isControlDown() && e.isShiftDown() && e.getKeyCode() == KeyEvent.VK_V) {
+                    e.consume();
+                    pasteCopiedBlockAfterCurrent();
+                    return;
+                }
+
+                if (e.isControlDown() && !e.isShiftDown() && !e.isAltDown() && e.getKeyCode() == KeyEvent.VK_V) {
+                    e.consume();
+                    pasteFromClipboardAtCaret();
+                    return;
+                }
+
+                if (e.isControlDown() && e.isShiftDown() && e.getKeyCode() == KeyEvent.VK_ENTER) {
+                    e.consume();
+                    insertEmptyBlockAfterCurrent();
+                    return;
+                }
+
+                if (e.isControlDown() && e.isShiftDown() && e.getKeyCode() == KeyEvent.VK_DELETE) {
+                    e.consume();
+                    deleteCurrentBlock();
+                    return;
+                }
+
+                if (e.isControlDown() && e.isAltDown() && e.getKeyCode() == KeyEvent.VK_C) {
+                    e.consume();
+                    copyCurrentBlockContent();
+                    return;
+                }
+
+                if (e.isControlDown() && e.isAltDown() && e.getKeyCode() == KeyEvent.VK_V) {
+                    e.consume();
+                    pasteCopiedContentIntoCurrentBlock();
+                    return;
+                }
+
+                if (e.isAltDown() && e.getKeyCode() == KeyEvent.VK_UP) {
+                    e.consume();
+                    moveCurrentBlockBy(-1);
+                    return;
+                }
+
+                if (e.isAltDown() && e.getKeyCode() == KeyEvent.VK_DOWN) {
+                    e.consume();
+                    moveCurrentBlockBy(1);
+                    return;
+                }
+
                 if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
                     e.consume();
                     deleteBeforeCaret();
@@ -142,11 +201,12 @@ public class EditorController implements WebSocketClient.Listener {
     }
 
     private void insertAtCaret(char value) {
-        Block block = document.getBlockCRDT().getPrimaryBlock();
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        Block block = location.block();
         CharacterCRDT tree = block.getCharTree();
 
         int caret = ui.getTextPane().getCaretPosition();
-        String parentId = tree.parentIdForInsertAt(caret);
+        String parentId = tree.parentIdForInsertAt(location.offsetInBlock());
         String nodeId = Node.buildId(currentUserId, System.currentTimeMillis(), localSequence.incrementAndGet());
 
         InsertOp op = new InsertOp(
@@ -164,15 +224,16 @@ public class EditorController implements WebSocketClient.Listener {
     }
 
     private void deleteBeforeCaret() {
-        Block block = document.getBlockCRDT().getPrimaryBlock();
+        int caret = ui.getTextPane().getCaretPosition();
+        CaretLocation location = resolveCaretLocation(caret);
+        Block block = location.block();
         CharacterCRDT tree = block.getCharTree();
 
-        int caret = ui.getTextPane().getCaretPosition();
-        if (caret <= 0) {
+        if (caret <= 0 || location.offsetInBlock() <= 0) {
             return;
         }
 
-        Node node = tree.getVisibleNodeAt(caret - 1);
+        Node node = tree.getVisibleNodeAt(location.offsetInBlock() - 1);
         if (node == null) {
             return;
         }
@@ -192,11 +253,12 @@ public class EditorController implements WebSocketClient.Listener {
     }
 
     private void deleteAtCaret() {
-        Block block = document.getBlockCRDT().getPrimaryBlock();
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        Block block = location.block();
         CharacterCRDT tree = block.getCharTree();
 
         int caret = ui.getTextPane().getCaretPosition();
-        Node node = tree.getVisibleNodeAt(caret);
+        Node node = tree.getVisibleNodeAt(location.offsetInBlock());
         if (node == null) {
             return;
         }
@@ -216,8 +278,9 @@ public class EditorController implements WebSocketClient.Listener {
     }
 
     private void splitBlockAtCaret() {
-        Block primary = document.getBlockCRDT().getPrimaryBlock();
-        int splitIndex = ui.getTextPane().getCaretPosition();
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        Block primary = location.block();
+        int splitIndex = location.offsetInBlock();
 
         String newBlockId = "block-" + System.currentTimeMillis();
         Operation.BlockOp split = Operation.BlockOp.split(
@@ -229,6 +292,180 @@ public class EditorController implements WebSocketClient.Listener {
                 newBlockId);
 
         applyOperationLocally(split, true, true, splitIndex);
+    }
+
+    private void copyCurrentBlock() {
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        copiedBlockId = location.block().getBlockId();
+        copiedBlockContent = extractBlockAtoms(location.block());
+        ui.setStatus("Copied block " + copiedBlockId + " (Ctrl+Shift+V to paste)");
+    }
+
+    private void pasteCopiedBlockAfterCurrent() {
+        if (copiedBlockId == null || copiedBlockContent.isEmpty()) {
+            ui.setStatus("No copied block available");
+            return;
+        }
+
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        int targetIndex = location.blockIndex() + 1;
+
+        String newBlockId = "block-copy-" + System.currentTimeMillis() + "-" + localSequence.incrementAndGet();
+        List<Operation> operations = new ArrayList<>();
+        operations.add(Operation.BlockOp.copyBlock(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                copiedBlockId,
+                newBlockId,
+                targetIndex));
+
+        // Ensure deterministic replicated content even if source block changes after copy.
+        operations.add(Operation.BlockOp.modifyBlockContent(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                newBlockId,
+                remapAtoms(copiedBlockContent),
+                false));
+
+        applyBulkOperationsLocally(operations, true, true, ui.getTextPane().getCaretPosition());
+    }
+
+    private void copyCurrentBlockContent() {
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        copiedBlockId = location.block().getBlockId();
+        copiedBlockContent = extractBlockAtoms(location.block());
+        ui.setStatus("Copied block content from " + location.block().getBlockId() + " (Ctrl+Alt+V to paste)");
+    }
+
+    private void pasteCopiedContentIntoCurrentBlock() {
+        if (copiedBlockContent.isEmpty()) {
+            ui.setStatus("No copied block content available");
+            return;
+        }
+
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        Operation.BlockOp op = Operation.BlockOp.copyBlockContent(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                copiedBlockId,
+                location.block().getBlockId(),
+                remapAtoms(copiedBlockContent),
+                true);
+
+        applyOperationLocally(op, true, true, ui.getTextPane().getCaretPosition());
+    }
+
+    private void moveCurrentBlockBy(int delta) {
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        int currentIndex = location.blockIndex();
+        int targetIndex = Math.max(0, currentIndex + delta);
+
+        if (targetIndex == currentIndex) {
+            return;
+        }
+
+        Operation.BlockOp move = Operation.BlockOp.move(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                location.block().getBlockId(),
+                targetIndex,
+                currentIndex);
+
+        applyOperationLocally(move, true, true, ui.getTextPane().getCaretPosition());
+    }
+
+    private void insertEmptyBlockAfterCurrent() {
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        String blockId = "block-" + System.currentTimeMillis() + "-" + localSequence.incrementAndGet();
+        int targetIndex = location.blockIndex() + 1;
+
+        Operation.BlockOp op = Operation.BlockOp.insert(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                blockId,
+                targetIndex);
+
+        applyOperationLocally(op, true, true, ui.getTextPane().getCaretPosition());
+    }
+
+    private void deleteCurrentBlock() {
+        List<Block> blocks = document.getBlockCRDT().getVisibleBlocks();
+        if (blocks.size() <= 1) {
+            ui.setStatus("Cannot delete the only remaining block");
+            return;
+        }
+
+        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        Operation.BlockOp op = Operation.BlockOp.delete(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                location.block().getBlockId(),
+                location.blockIndex());
+
+        applyOperationLocally(op, true, true, ui.getTextPane().getCaretPosition());
+    }
+
+    private CaretLocation resolveCaretLocation(int globalCaret) {
+        List<Block> blocks = document.getBlockCRDT().getVisibleBlocks();
+        if (blocks.isEmpty()) {
+            Block block = document.getBlockCRDT().insertBlock("block-0", 0);
+            return new CaretLocation(block, 0, 0);
+        }
+
+        int caret = Math.max(0, globalCaret);
+        int position = 0;
+
+        for (int i = 0; i < blocks.size(); i++) {
+            Block block = blocks.get(i);
+            int blockLength = block.getCharTree().getVisibleNodesInOrder().size();
+            int blockEnd = position + blockLength;
+
+            if (caret <= blockEnd) {
+                return new CaretLocation(block, i, Math.max(0, caret - position));
+            }
+
+            position = blockEnd;
+            if (i < blocks.size() - 1) {
+                int newlinePos = position + 1;
+                if (caret <= newlinePos) {
+                    return new CaretLocation(blocks.get(i + 1), i + 1, 0);
+                }
+                position = newlinePos;
+            }
+        }
+
+        Block last = blocks.get(blocks.size() - 1);
+        int lastOffset = last.getCharTree().getVisibleNodesInOrder().size();
+        return new CaretLocation(last, blocks.size() - 1, lastOffset);
+    }
+
+    private List<BlockCRDT.CharacterAtom> extractBlockAtoms(Block block) {
+        List<BlockCRDT.CharacterAtom> atoms = new ArrayList<>();
+        for (Node node : block.getCharTree().getVisibleNodesInOrder()) {
+            atoms.add(new BlockCRDT.CharacterAtom(node.getId(), node.getValue(), node.isBold(), node.isItalic()));
+        }
+        return atoms;
+    }
+
+    private List<BlockCRDT.CharacterAtom> remapAtoms(List<BlockCRDT.CharacterAtom> source) {
+        long baseTimestamp = System.currentTimeMillis();
+        List<BlockCRDT.CharacterAtom> remapped = new ArrayList<>();
+
+        for (BlockCRDT.CharacterAtom atom : source) {
+            remapped.add(new BlockCRDT.CharacterAtom(
+                    Node.buildId(currentUserId, baseTimestamp, localSequence.incrementAndGet()),
+                    atom.value(),
+                    atom.bold(),
+                    atom.italic()));
+        }
+
+        return remapped;
     }
 
     private void applyFormat(boolean bold, boolean italic) {
@@ -345,7 +582,8 @@ public class EditorController implements WebSocketClient.Listener {
         }
 
         try {
-            String output = document.exportToTextFormat();
+            // Export .txt as human-readable text rather than internal encoded format.
+            String output = document.renderPlainText();
 
             String fileName = file.getName().toLowerCase();
             File outputFile = fileName.endsWith(".txt")
@@ -357,6 +595,69 @@ public class EditorController implements WebSocketClient.Listener {
         } catch (Exception e) {
             ui.showError("Export failed: " + e.getMessage());
         }
+    }
+
+    private void pasteFromClipboardAtCaret() {
+        String clipboardText;
+        try {
+            Object value = Toolkit.getDefaultToolkit()
+                    .getSystemClipboard()
+                    .getData(DataFlavor.stringFlavor);
+            clipboardText = value == null ? "" : value.toString();
+        } catch (Exception e) {
+            ui.showError("Paste failed: cannot read clipboard text.");
+            return;
+        }
+
+        if (clipboardText.isEmpty()) {
+            return;
+        }
+
+        int caret = ui.getTextPane().getCaretPosition();
+        List<Operation> operations = new ArrayList<>();
+
+        for (int i = 0; i < clipboardText.length(); i++) {
+            char ch = clipboardText.charAt(i);
+
+            if (ch == '\r') {
+                continue;
+            }
+
+            if (ch == '\n') {
+                CaretLocation location = resolveCaretLocation(caret);
+                String newBlockId = "block-" + System.currentTimeMillis() + "-" + localSequence.incrementAndGet();
+                Operation.BlockOp split = Operation.BlockOp.split(
+                        currentSessionId,
+                        currentUserId,
+                        System.currentTimeMillis(),
+                        location.block().getBlockId(),
+                        location.offsetInBlock(),
+                        newBlockId);
+                operations.add(split);
+                caret += 1;
+                continue;
+            }
+
+            CaretLocation location = resolveCaretLocation(caret);
+            CharacterCRDT tree = location.block().getCharTree();
+            String parentId = tree.parentIdForInsertAt(location.offsetInBlock());
+            String nodeId = Node.buildId(currentUserId, System.currentTimeMillis(), localSequence.incrementAndGet());
+
+            InsertOp op = new InsertOp(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    location.block().getBlockId(),
+                    nodeId,
+                    parentId,
+                    ch,
+                    false,
+                    false);
+            operations.add(op);
+            caret += 1;
+        }
+
+        applyBulkOperationsLocally(operations, true, true, caret);
     }
 
     private void importIntoCurrentSession(String importedContent) {
@@ -638,5 +939,8 @@ public class EditorController implements WebSocketClient.Listener {
             ui.setStatus("Error: " + message);
             ui.showError(message);
         });
+    }
+
+    private record CaretLocation(Block block, int blockIndex, int offsetInBlock) {
     }
 }
