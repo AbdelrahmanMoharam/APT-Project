@@ -229,7 +229,16 @@ public class EditorController implements WebSocketClient.Listener {
         Block block = location.block();
         CharacterCRDT tree = block.getCharTree();
 
-        if (caret <= 0 || location.offsetInBlock() <= 0) {
+        if (caret <= 0) {
+            return;
+        }
+
+        if (location.offsetInBlock() == 0 && location.blockIndex() > 0) {
+            mergeWithPreviousBlock(location);
+            return;
+        }
+
+        if (location.offsetInBlock() <= 0) {
             return;
         }
 
@@ -250,6 +259,70 @@ public class EditorController implements WebSocketClient.Listener {
                 node.isItalic());
 
         applyOperationLocally(op, true, true, caret - 1);
+    }
+
+    private void mergeWithPreviousBlock(CaretLocation location) {
+        List<Block> blocks = document.getBlockCRDT().getVisibleBlocks();
+        int currentIndex = location.blockIndex();
+        if (currentIndex <= 0 || currentIndex >= blocks.size()) {
+            return;
+        }
+
+        Block current = blocks.get(currentIndex);
+        Block previous = blocks.get(currentIndex - 1);
+
+        List<BlockCRDT.CharacterAtom> previousSnapshot = extractBlockAtoms(previous);
+        List<BlockCRDT.CharacterAtom> currentContent = extractBlockAtoms(current);
+
+        List<Operation> forwardOps = new ArrayList<>();
+        List<Operation> inverseOps = new ArrayList<>();
+
+        if (!currentContent.isEmpty()) {
+            forwardOps.add(Operation.BlockOp.modifyBlockContent(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    previous.getBlockId(),
+                    currentContent,
+                    true));
+
+            inverseOps.add(Operation.BlockOp.modifyBlockContent(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    previous.getBlockId(),
+                    previousSnapshot,
+                    false));
+        }
+
+        forwardOps.add(Operation.BlockOp.delete(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                current.getBlockId(),
+                currentIndex));
+
+        inverseOps.add(0, Operation.BlockOp.insert(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                current.getBlockId(),
+                currentIndex));
+
+        int desiredCaret = computeGlobalCaret(blocks, currentIndex - 1, previousSnapshot.size());
+
+        applyBulkOperationsLocally(forwardOps, false, true, desiredCaret);
+
+        for (Operation operation : forwardOps) {
+            operation.setUserId(null);
+        }
+        for (Operation operation : inverseOps) {
+            operation.setUserId(null);
+        }
+
+        if (!inverseOps.isEmpty()) {
+            undoRedoManager.recordAction(UndoRedoManager.UndoableAction.of(forwardOps, inverseOps));
+        }
     }
 
     private void deleteAtCaret() {
