@@ -278,7 +278,8 @@ public class EditorController implements WebSocketClient.Listener {
     }
 
     private void splitBlockAtCaret() {
-        CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        int caret = ui.getTextPane().getCaretPosition();
+        CaretLocation location = resolveCaretLocation(caret);
         Block primary = location.block();
         int splitIndex = location.offsetInBlock();
 
@@ -291,7 +292,7 @@ public class EditorController implements WebSocketClient.Listener {
                 splitIndex,
                 newBlockId);
 
-        applyOperationLocally(split, true, true, splitIndex);
+        applyOperationLocally(split, true, true, caret + 1);
     }
 
     private void copyCurrentBlock() {
@@ -401,6 +402,12 @@ public class EditorController implements WebSocketClient.Listener {
         }
 
         CaretLocation location = resolveCaretLocation(ui.getTextPane().getCaretPosition());
+        int desiredCaret = 0;
+        if (location.blockIndex() > 0) {
+            Block previous = blocks.get(location.blockIndex() - 1);
+            int previousLength = previous.getCharTree().getVisibleNodesInOrder().size();
+            desiredCaret = computeGlobalCaret(blocks, location.blockIndex() - 1, previousLength);
+        }
         Operation.BlockOp op = Operation.BlockOp.delete(
                 currentSessionId,
                 currentUserId,
@@ -408,7 +415,7 @@ public class EditorController implements WebSocketClient.Listener {
                 location.block().getBlockId(),
                 location.blockIndex());
 
-        applyOperationLocally(op, true, true, ui.getTextPane().getCaretPosition());
+        applyOperationLocally(op, true, true, desiredCaret);
     }
 
     private CaretLocation resolveCaretLocation(int globalCaret) {
@@ -443,6 +450,30 @@ public class EditorController implements WebSocketClient.Listener {
         Block last = blocks.get(blocks.size() - 1);
         int lastOffset = last.getCharTree().getVisibleNodesInOrder().size();
         return new CaretLocation(last, blocks.size() - 1, lastOffset);
+    }
+
+    private int computeGlobalCaret(List<Block> blocks, int blockIndex, int offsetInBlock) {
+        if (blocks == null || blocks.isEmpty()) {
+            return 0;
+        }
+
+        int position = 0;
+        for (int i = 0; i < blocks.size(); i++) {
+            Block block = blocks.get(i);
+            int blockLength = block.getCharTree().getVisibleNodesInOrder().size();
+
+            if (i == blockIndex) {
+                int safeOffset = Math.max(0, Math.min(offsetInBlock, blockLength));
+                return position + safeOffset;
+            }
+
+            position += blockLength;
+            if (i < blocks.size() - 1) {
+                position += 1;
+            }
+        }
+
+        return position;
     }
 
     private List<BlockCRDT.CharacterAtom> extractBlockAtoms(Block block) {
@@ -490,6 +521,17 @@ public class EditorController implements WebSocketClient.Listener {
                 italic);
 
         applyOperationLocally(op, true, true, selectionEnd);
+        restoreSelection(selectionStart, selectionEnd);
+    }
+
+    private void restoreSelection(int selectionStart, int selectionEnd) {
+        int length = ui.getTextPane().getDocument().getLength();
+        int safeStart = Math.max(0, Math.min(selectionStart, length));
+        int safeEnd = Math.max(safeStart, Math.min(selectionEnd, length));
+
+        ui.getTextPane().setSelectionStart(safeStart);
+        ui.getTextPane().setSelectionEnd(safeEnd);
+        ui.getTextPane().requestFocusInWindow();
     }
 
     private void undoLocal() {
@@ -497,13 +539,15 @@ public class EditorController implements WebSocketClient.Listener {
             return;
         }
 
-        Operation inverse = undoRedoManager.undo(document);
-        if (inverse == null) {
+        List<Operation> inverses = undoRedoManager.undo(document);
+        if (inverses.isEmpty()) {
             return;
         }
 
         renderDocumentKeepingCaret(ui.getTextPane().getCaretPosition());
-        socketClient.sendOperation(inverse);
+        for (Operation inverse : inverses) {
+            socketClient.sendOperation(inverse);
+        }
     }
 
     private void redoLocal() {
@@ -511,13 +555,15 @@ public class EditorController implements WebSocketClient.Listener {
             return;
         }
 
-        Operation op = undoRedoManager.redo(document);
-        if (op == null) {
+        List<Operation> ops = undoRedoManager.redo(document);
+        if (ops.isEmpty()) {
             return;
         }
 
         renderDocumentKeepingCaret(ui.getTextPane().getCaretPosition());
-        socketClient.sendOperation(op);
+        for (Operation op : ops) {
+            socketClient.sendOperation(op);
+        }
     }
 
     private void importDocument() {
@@ -614,7 +660,8 @@ public class EditorController implements WebSocketClient.Listener {
         }
 
         int caret = ui.getTextPane().getCaretPosition();
-        List<Operation> operations = new ArrayList<>();
+        List<Operation> forwardOps = new ArrayList<>();
+        List<Operation> inverseOps = new ArrayList<>();
 
         for (int i = 0; i < clipboardText.length(); i++) {
             char ch = clipboardText.charAt(i);
@@ -633,7 +680,7 @@ public class EditorController implements WebSocketClient.Listener {
                         location.block().getBlockId(),
                         location.offsetInBlock(),
                         newBlockId);
-                operations.add(split);
+                recordPasteOperation(split, forwardOps, inverseOps);
                 caret += 1;
                 continue;
             }
@@ -653,11 +700,58 @@ public class EditorController implements WebSocketClient.Listener {
                     ch,
                     false,
                     false);
-            operations.add(op);
+            recordPasteOperation(op, forwardOps, inverseOps);
             caret += 1;
         }
 
-        applyBulkOperationsLocally(operations, true, true, caret);
+        if (!inverseOps.isEmpty()) {
+            UndoRedoManager.UndoableAction action = UndoRedoManager.UndoableAction.of(forwardOps, inverseOps);
+            undoRedoManager.recordAction(action);
+        }
+
+        renderDocumentKeepingCaret(caret);
+    }
+
+    private void recordPasteOperation(Operation operation,
+                                      List<Operation> forwardOps,
+                                      List<Operation> inverseOps) {
+        if (operation == null) {
+            return;
+        }
+
+        List<Operation> perOpInverse = buildInverseOperations(operation);
+
+        operation.setUserId(null);
+        for (Operation inverse : perOpInverse) {
+            inverse.setUserId(null);
+        }
+
+        operation.apply(document);
+        socketClient.sendOperation(operation);
+
+        forwardOps.add(operation);
+        if (!perOpInverse.isEmpty()) {
+            inverseOps.addAll(0, perOpInverse);
+        }
+    }
+
+    private void applyOperationWithoutRender(Operation operation,
+                                             boolean trackUndo,
+                                             boolean sendToServer) {
+        if (operation == null) {
+            return;
+        }
+
+        UndoRedoManager.UndoableAction action = trackUndo ? buildUndoAction(operation) : null;
+        operation.apply(document);
+
+        if (trackUndo && action != null) {
+            undoRedoManager.recordAction(action);
+        }
+
+        if (sendToServer) {
+            socketClient.sendOperation(operation);
+        }
     }
 
     private void importIntoCurrentSession(String importedContent) {
@@ -776,10 +870,11 @@ public class EditorController implements WebSocketClient.Listener {
             return;
         }
 
+        UndoRedoManager.UndoableAction action = trackUndo ? buildUndoAction(operation) : null;
         operation.apply(document);
 
-        if (trackUndo) {
-            undoRedoManager.recordLocalOperation(operation);
+        if (trackUndo && action != null) {
+            undoRedoManager.recordAction(action);
         }
 
         renderDocumentKeepingCaret(desiredCaret);
@@ -798,17 +893,147 @@ public class EditorController implements WebSocketClient.Listener {
             return;
         }
 
+        List<Operation> inverseOps = trackUndo ? new ArrayList<>() : List.of();
+
         for (Operation operation : operations) {
-            operation.apply(document);
+            List<Operation> perOpInverse = trackUndo ? buildInverseOperations(operation) : List.of();
             if (trackUndo) {
-                undoRedoManager.recordLocalOperation(operation);
+                operation.setUserId(null);
+                for (Operation inverse : perOpInverse) {
+                    inverse.setUserId(null);
+                }
             }
+            operation.apply(document);
+
+            if (trackUndo && !perOpInverse.isEmpty()) {
+                inverseOps.addAll(0, perOpInverse);
+            }
+
             if (sendToServer) {
                 socketClient.sendOperation(operation);
             }
         }
 
+        if (trackUndo && !inverseOps.isEmpty()) {
+            UndoRedoManager.UndoableAction action = UndoRedoManager.UndoableAction.of(operations, inverseOps);
+            undoRedoManager.recordAction(action);
+        }
+
         renderDocumentKeepingCaret(desiredCaret);
+    }
+
+    private UndoRedoManager.UndoableAction buildUndoAction(Operation operation) {
+        if (operation == null) {
+            return null;
+        }
+
+        List<Operation> inverseOps = buildInverseOperations(operation);
+        if (inverseOps.isEmpty()) {
+            return null;
+        }
+
+        operation.setUserId(null);
+        for (Operation inverse : inverseOps) {
+            inverse.setUserId(null);
+        }
+
+        return UndoRedoManager.UndoableAction.of(List.of(operation), inverseOps);
+    }
+
+    private List<Operation> buildInverseOperations(Operation operation) {
+        if (operation instanceof Operation.BlockOp blockOp) {
+            return buildBlockInverseOperations(blockOp);
+        }
+
+        Operation inverse = operation.getInverse();
+        if (inverse == null) {
+            return List.of();
+        }
+        return List.of(inverse);
+    }
+
+    private List<Operation> buildBlockInverseOperations(Operation.BlockOp blockOp) {
+        if (blockOp == null) {
+            return List.of();
+        }
+
+        switch (blockOp.getAction()) {
+            case MODIFY_BLOCK_CONTENT:
+            case COPY_BLOCK_CONTENT:
+                Operation inverse = buildBlockContentInverse(blockOp);
+                return inverse == null ? List.of() : List.of(inverse);
+            case SPLIT_BLOCK:
+                return buildSplitInverseOperations(blockOp);
+            default:
+                Operation simpleInverse = blockOp.getInverse();
+                return simpleInverse == null ? List.of() : List.of(simpleInverse);
+        }
+    }
+
+    private Operation buildBlockContentInverse(Operation.BlockOp blockOp) {
+        String blockId = blockOp.getBlockId();
+        if (blockId == null) {
+            return null;
+        }
+
+        Block block = document.getBlockCRDT().getBlock(blockId);
+        List<BlockCRDT.CharacterAtom> snapshot = block == null ? List.of() : extractBlockAtoms(block);
+
+        return Operation.BlockOp.modifyBlockContent(
+                currentSessionId,
+                currentUserId,
+                System.currentTimeMillis(),
+                blockId,
+                snapshot,
+                false);
+    }
+
+    private List<Operation> buildSplitInverseOperations(Operation.BlockOp blockOp) {
+        String blockId = blockOp.getBlockId();
+        if (blockId == null) {
+            Operation inverse = blockOp.getInverse();
+            return inverse == null ? List.of() : List.of(inverse);
+        }
+
+        Block block = document.getBlockCRDT().getBlock(blockId);
+        if (block == null) {
+            Operation inverse = blockOp.getInverse();
+            return inverse == null ? List.of() : List.of(inverse);
+        }
+
+        List<Node> visible = block.getCharTree().getVisibleNodesInOrder();
+        int splitIndex = blockOp.getSplitIndex();
+        if (splitIndex < 0 || splitIndex >= visible.size()) {
+            Operation inverse = blockOp.getInverse();
+            return inverse == null ? List.of() : List.of(inverse);
+        }
+
+        List<Operation> inverses = new ArrayList<>();
+        for (int i = splitIndex; i < visible.size(); i++) {
+            Node node = visible.get(i);
+            inverses.add(new InsertOp(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    blockId,
+                    node.getId(),
+                    normalizeParent(node.getParentId()),
+                    node.getValue(),
+                    node.isBold(),
+                    node.isItalic()));
+        }
+
+        String newBlockId = blockOp.getNewBlockId();
+        if (newBlockId != null) {
+            inverses.add(Operation.BlockOp.delete(
+                    currentSessionId,
+                    currentUserId,
+                    System.currentTimeMillis(),
+                    newBlockId,
+                    -1));
+        }
+
+        return inverses;
     }
 
     private void renderDocumentKeepingCaret(int desiredCaret) {
@@ -883,7 +1108,12 @@ public class EditorController implements WebSocketClient.Listener {
             return;
         }
 
+        UndoRedoManager.UndoableAction action = buildUndoAction(operation);
         operation.apply(document);
+
+        if (action != null) {
+            undoRedoManager.recordAction(action);
+        }
 
         SwingUtilities.invokeLater(() -> renderDocumentKeepingCaret(ui.getTextPane().getCaretPosition()));
     }

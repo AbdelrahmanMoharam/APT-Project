@@ -22,6 +22,9 @@ public class CharacterCRDT {
     public synchronized Node insertNode(Node node) {
         Node existing = nodeById.get(node.getId());
         if (existing != null) {
+            if (existing.isDeleted()) {
+                existing.setDeleted(false);
+            }
             return existing;
         }
 

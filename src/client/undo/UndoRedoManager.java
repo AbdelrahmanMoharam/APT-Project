@@ -4,54 +4,56 @@ import client.model.Document;
 import client.operations.Operation;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.List;
 
 public class UndoRedoManager {
 
     private static final int MAX_HISTORY = 10;
 
-    private final Deque<Operation> undoStack = new ArrayDeque<>();
-    private final Deque<Operation> redoStack = new ArrayDeque<>();
+    private final Deque<UndoableAction> undoStack = new ArrayDeque<>();
+    private final Deque<UndoableAction> redoStack = new ArrayDeque<>();
 
-    public synchronized void recordLocalOperation(Operation operation) {
-        if (operation == null) {
+    public synchronized void recordAction(UndoableAction action) {
+        if (action == null || action.inverseOps().isEmpty()) {
             return;
         }
 
-        undoStack.push(operation);
+        undoStack.push(action);
         trim(undoStack);
         redoStack.clear();
     }
 
-    public synchronized Operation undo(Document document) {
+    public synchronized List<Operation> undo(Document document) {
         if (undoStack.isEmpty()) {
-            return null;
+            return List.of();
         }
 
-        Operation original = undoStack.pop();
-        Operation inverse = original.getInverse();
-        if (inverse == null) {
-            return null;
+        UndoableAction action = undoStack.pop();
+        for (Operation inverse : action.inverseOps()) {
+            inverse.apply(document);
         }
-
-        inverse.apply(document);
-        redoStack.push(original);
+        redoStack.push(action);
         trim(redoStack);
 
-        return inverse;
+        return action.inverseOps();
     }
 
-    public synchronized Operation redo(Document document) {
+    public synchronized List<Operation> redo(Document document) {
         if (redoStack.isEmpty()) {
-            return null;
+            return List.of();
         }
 
-        Operation operation = redoStack.pop();
-        operation.apply(document);
-        undoStack.push(operation);
+        UndoableAction action = redoStack.pop();
+        for (Operation operation : action.forwardOps()) {
+            operation.apply(document);
+        }
+        undoStack.push(action);
         trim(undoStack);
 
-        return operation;
+        return action.forwardOps();
     }
 
     public synchronized boolean canUndo() {
@@ -62,9 +64,27 @@ public class UndoRedoManager {
         return !redoStack.isEmpty();
     }
 
-    private void trim(Deque<Operation> stack) {
+    private void trim(Deque<UndoableAction> stack) {
         while (stack.size() > MAX_HISTORY) {
             stack.removeLast();
+        }
+    }
+
+    public record UndoableAction(List<Operation> forwardOps, List<Operation> inverseOps) {
+        public UndoableAction {
+            forwardOps = normalize(forwardOps);
+            inverseOps = normalize(inverseOps);
+        }
+
+        public static UndoableAction of(List<Operation> forwardOps, List<Operation> inverseOps) {
+            return new UndoableAction(forwardOps, inverseOps);
+        }
+
+        private static List<Operation> normalize(List<Operation> ops) {
+            if (ops == null || ops.isEmpty()) {
+                return List.of();
+            }
+            return Collections.unmodifiableList(new ArrayList<>(ops));
         }
     }
 }

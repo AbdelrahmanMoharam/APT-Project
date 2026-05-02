@@ -1,7 +1,6 @@
 package client.ui;
 
 import javax.swing.JButton;
-import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
@@ -12,8 +11,6 @@ public class Toolbar extends JPanel {
     private final JTextField userField = new JTextField("user1", 8);
     private final JTextField titleField = new JTextField("Shared Doc", 10);
     private final JTextField joinCodeField = new JTextField(10);
-
-    private final JComboBox<String> roleSelector = new JComboBox<>(new String[]{"EDITOR", "VIEWER"});
 
     private final JButton createSessionButton = new JButton("Create Session");
     private final JButton joinSessionButton = new JButton("Join Session");
@@ -40,8 +37,6 @@ public class Toolbar extends JPanel {
 
         add(new JLabel("Join Code:"));
         add(joinCodeField);
-        add(new JLabel("Role:"));
-        add(roleSelector);
         add(joinSessionButton);
 
         add(boldButton);
@@ -64,10 +59,6 @@ public class Toolbar extends JPanel {
 
     public JTextField getJoinCodeField() {
         return joinCodeField;
-    }
-
-    public JComboBox<String> getRoleSelector() {
-        return roleSelector;
     }
 
     public JButton getCreateSessionButton() {

@@ -528,6 +528,34 @@ public abstract class Operation {
                 opNode.put("append", appendContent);
             }
         }
+
+        public Action getAction() {
+            return action;
+        }
+
+        public String getBlockId() {
+            return blockId;
+        }
+
+        public int getTargetIndex() {
+            return targetIndex;
+        }
+
+        public int getSplitIndex() {
+            return splitIndex;
+        }
+
+        public String getNewBlockId() {
+            return newBlockId;
+        }
+
+        public String getSourceBlockId() {
+            return sourceBlockId;
+        }
+
+        public boolean isAppendContent() {
+            return appendContent;
+        }
     }
 
     public static final class CursorOp extends Operation {
