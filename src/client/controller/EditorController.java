@@ -133,6 +133,8 @@ public class EditorController implements WebSocketClient.Listener {
             }
         });
 
+        toolbar.getSwapButton().addActionListener(event -> swapCharacters());
+
         wireTextInput(ui.getTextPane());
     }
 
@@ -846,6 +848,79 @@ public class EditorController implements WebSocketClient.Listener {
         } catch (Exception e) {
             ui.showError("Export failed: " + e.getMessage());
         }
+    }
+
+    private void swapCharacters() {
+        if (currentSessionId == null || !editorMode || !socketClient.isConnected()) {
+            return;
+        }
+
+        int start = ui.getTextPane().getSelectionStart();
+        int end = ui.getTextPane().getSelectionEnd();
+
+        if (end - start != 2) {
+            ui.showError("Please select exactly 2 characters to swap.");
+            return;
+        }
+
+        List<Document.StyledChar> flattened = document.flattenVisibleChars();
+        if (start < 0 || end > flattened.size()) {
+            return;
+        }
+
+        Document.StyledChar c1 = flattened.get(start);
+        Document.StyledChar c2 = flattened.get(start + 1);
+
+        if (c1.node() == null || c2.node() == null) {
+            ui.showError("Cannot swap line breaks.");
+            return;
+        }
+
+        char val1 = c1.node().getValue();
+        boolean bold1 = c1.node().isBold();
+        boolean italic1 = c1.node().isItalic();
+
+        char val2 = c2.node().getValue();
+        boolean bold2 = c2.node().isBold();
+        boolean italic2 = c2.node().isItalic();
+
+        List<Operation> forwardOps = new ArrayList<>();
+        List<Operation> inverseOps = new ArrayList<>();
+
+        DeleteOp del2 = new DeleteOp(
+                currentSessionId, currentUserId, System.currentTimeMillis(),
+                c2.blockId(), c2.node().getId(), normalizeParent(c2.node().getParentId()),
+                val2, bold2, italic2);
+        recordPasteOperation(del2, forwardOps, inverseOps);
+
+        DeleteOp del1 = new DeleteOp(
+                currentSessionId, currentUserId, System.currentTimeMillis(),
+                c1.blockId(), c1.node().getId(), normalizeParent(c1.node().getParentId()),
+                val1, bold1, italic1);
+        recordPasteOperation(del1, forwardOps, inverseOps);
+
+        CaretLocation loc = resolveCaretLocation(start);
+        String parentId2 = loc.block().getCharTree().parentIdForInsertAt(loc.offsetInBlock());
+        String nodeId2 = Node.buildId(currentUserId, System.currentTimeMillis(), localSequence.incrementAndGet());
+        InsertOp ins2 = new InsertOp(
+                currentSessionId, currentUserId, System.currentTimeMillis(),
+                loc.block().getBlockId(), nodeId2, parentId2, val2, bold2, italic2);
+        recordPasteOperation(ins2, forwardOps, inverseOps);
+
+        loc = resolveCaretLocation(start + 1);
+        String parentId1 = loc.block().getCharTree().parentIdForInsertAt(loc.offsetInBlock());
+        String nodeId1 = Node.buildId(currentUserId, System.currentTimeMillis(), localSequence.incrementAndGet());
+        InsertOp ins1 = new InsertOp(
+                currentSessionId, currentUserId, System.currentTimeMillis(),
+                loc.block().getBlockId(), nodeId1, parentId1, val1, bold1, italic1);
+        recordPasteOperation(ins1, forwardOps, inverseOps);
+
+        if (!inverseOps.isEmpty()) {
+            UndoRedoManager.UndoableAction action = UndoRedoManager.UndoableAction.of(forwardOps, inverseOps);
+            undoRedoManager.recordAction(action);
+        }
+
+        renderDocumentKeepingCaret(start + 2);
     }
 
     private void pasteFromClipboardAtCaret() {

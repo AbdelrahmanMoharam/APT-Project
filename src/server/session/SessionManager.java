@@ -538,7 +538,9 @@ public class SessionManager {
 
         String documentId = session.getDocumentId();
 
+        session.markDeleted();
         databaseManager.deleteDocument(documentId);
+        databaseManager.deleteSession(context.sessionId());
         sessions.remove(context.sessionId());
 
         ObjectNode deleteMessage = mapper.createObjectNode();

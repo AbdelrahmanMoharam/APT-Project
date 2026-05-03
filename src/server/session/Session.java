@@ -24,6 +24,7 @@ public class Session {
     private final Document document;
     private final List<StoredOperation> operationLog;
     private final AtomicLong sequenceCounter;
+    private volatile boolean deleted = false;
 
     public Session(String sessionId,
                    String documentId,
@@ -167,6 +168,14 @@ public class Session {
 
     public Document getDocument() {
         return document;
+    }
+
+    public void markDeleted() {
+        this.deleted = true;
+    }
+
+    public boolean isDeleted() {
+        return deleted;
     }
 
     public static class AttachResult {

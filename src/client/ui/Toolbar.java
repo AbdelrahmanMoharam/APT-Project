@@ -27,6 +27,8 @@ public class Toolbar extends JPanel {
     private final JButton renameButton = new JButton("Rename Doc");
     private final JButton deleteButton = new JButton("Delete Doc");
 
+    private final JButton swapButton = new JButton("Swap Chars");
+
     public Toolbar() {
         super(new FlowLayout(FlowLayout.LEFT, 8, 8));
         setPreferredSize(new java.awt.Dimension(0, 80));
@@ -54,6 +56,7 @@ public class Toolbar extends JPanel {
 
         add(renameButton);
         add(deleteButton);
+        add(swapButton);
     }
 
     public JTextField getUserField() {
@@ -106,5 +109,9 @@ public class Toolbar extends JPanel {
 
     public JButton getDeleteButton() {
         return deleteButton;
+    }
+
+    public JButton getSwapButton() {
+        return swapButton;
     }
 }

@@ -236,6 +236,9 @@ public class DatabaseManager {
     }
 
     public synchronized void updateSession(Session session) {
+        if (session == null || session.isDeleted()) {
+            return;
+        }
         SessionRecord record = toSessionRecord(session);
 
         try {
@@ -246,6 +249,16 @@ public class DatabaseManager {
                     upsertOptions);
         } catch (MongoException e) {
             throw databaseFailure("updateSession", e);
+        }
+    }
+
+    public synchronized void deleteSession(String sessionId) {
+        String safeSessionId = requireNonBlank(sessionId, "sessionId");
+
+        try {
+            sessionsCollection.deleteOne(Filters.eq("_id", safeSessionId));
+        } catch (MongoException e) {
+            throw databaseFailure("deleteSession", e);
         }
     }
 
@@ -271,7 +284,7 @@ public class DatabaseManager {
 
     // Compatibility wrappers for the existing SessionManager code path.
     public synchronized void saveSession(Session session) {
-        if (session == null) {
+        if (session == null || session.isDeleted()) {
             return;
         }
         updateSession(session);
