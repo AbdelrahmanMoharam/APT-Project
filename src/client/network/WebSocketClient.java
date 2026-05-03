@@ -207,6 +207,7 @@ public class WebSocketClient {
         SessionInfo info = new SessionInfo(
                 sessionId,
                 payload.path("documentId").asText(sessionId),
+                payload.path("documentName").asText("Untitled Document"),
                 payload.path("role").asText("EDITOR"),
                 payload.path("editorCode").asText(""),
                 payload.path("viewerCode").asText(""));
@@ -223,6 +224,7 @@ public class WebSocketClient {
         SessionInfo info = new SessionInfo(
                 sessionId,
                 payload.path("documentId").asText(sessionId),
+                payload.path("documentName").asText("Untitled Document"),
                 payload.path("role").asText("VIEWER"),
                 payload.path("editorCode").asText(""),
                 payload.path("viewerCode").asText(""));
@@ -328,6 +330,7 @@ public class WebSocketClient {
 
     public record SessionInfo(String sessionId,
                               String documentId,
+                              String documentName,
                               String role,
                               String editorCode,
                               String viewerCode) {

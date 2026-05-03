@@ -287,6 +287,7 @@ public class SessionManager {
         ObjectNode createdPayload = mapper.createObjectNode();
         createdPayload.put("sessionId", sessionId);
         createdPayload.put("documentId", documentId);
+        createdPayload.put("documentName", name);
         createdPayload.put("userId", userId);
         createdPayload.put("role", UserSession.Role.EDITOR.name());
         createdPayload.put("editorCode", editorCode);
@@ -375,6 +376,7 @@ public class SessionManager {
             ObjectNode joinedPayload = mapper.createObjectNode();
             joinedPayload.put("sessionId", session.getSessionId());
             joinedPayload.put("documentId", session.getDocumentId());
+            joinedPayload.put("documentName", session.getDocument() != null ? session.getDocument().getName() : "Untitled Document");
             joinedPayload.put("userId", userId);
             joinedPayload.put("role", userSession.getRole().name());
             joinedPayload.put("editorCode", session.getEditorCode());

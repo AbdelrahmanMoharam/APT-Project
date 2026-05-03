@@ -64,6 +64,11 @@ public class UndoRedoManager {
         return !redoStack.isEmpty();
     }
 
+    public synchronized void clear() {
+        undoStack.clear();
+        redoStack.clear();
+    }
+
     private void trim(Deque<UndoableAction> stack) {
         while (stack.size() > MAX_HISTORY) {
             stack.removeLast();

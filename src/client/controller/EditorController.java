@@ -1286,9 +1286,16 @@ public class EditorController implements WebSocketClient.Listener {
         this.currentSessionId = info.sessionId();
         this.editorMode = true;
         this.document.setDocumentId(info.documentId());
+        this.document.setName(info.documentName());
+
+        this.document.getBlockCRDT().clear();
+        this.undoRedoManager.clear();
 
         SwingUtilities.invokeLater(() -> {
+            ui.getTextPane().setText("");
             ui.setEditorMode(true);
+            ui.setTitle(info.documentName());
+            ui.getToolbar().getTitleField().setText(info.documentName());
             ui.setShareCodes(info.editorCode(), info.viewerCode());
             ui.setStatus("Session created: " + info.sessionId());
         });
@@ -1299,9 +1306,16 @@ public class EditorController implements WebSocketClient.Listener {
         this.currentSessionId = info.sessionId();
         this.editorMode = "EDITOR".equalsIgnoreCase(info.role());
         this.document.setDocumentId(info.documentId());
+        this.document.setName(info.documentName());
+
+        this.document.getBlockCRDT().clear();
+        this.undoRedoManager.clear();
 
         SwingUtilities.invokeLater(() -> {
+            ui.getTextPane().setText("");
             ui.setEditorMode(editorMode);
+            ui.setTitle(info.documentName());
+            ui.getToolbar().getTitleField().setText(info.documentName());
             ui.setShareCodes(info.editorCode(), info.viewerCode());
             ui.setStatus("Joined session: " + info.sessionId() + " as " + info.role());
         });
