@@ -52,6 +52,8 @@ public class SessionManager {
     private final CodeManager codeManager;
     private final DatabaseManager databaseManager;
     private final ScheduledExecutorService cleanupExecutor;
+    // Async executor for non-blocking DB saves — keeps broadcasts fast.
+    private final java.util.concurrent.ExecutorService persistExecutor;
 
     public SessionManager() {
         this(new CodeManager(), new DatabaseManager());
@@ -62,6 +64,12 @@ public class SessionManager {
         this.databaseManager = Objects.requireNonNull(databaseManager, "databaseManager must not be null");
 
         restorePersistedSessions();
+
+        this.persistExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "session-persist");
+            thread.setDaemon(true);
+            return thread;
+        });
 
         this.cleanupExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "session-cleanup");
@@ -125,6 +133,14 @@ public class SessionManager {
                     handleCursorUpdate(socketSession, message, rootObject, legacyDocumentId);
                     break;
 
+                case RENAME_DOCUMENT:
+                    handleRenameDocument(socketSession, message, rootObject, legacyDocumentId);
+                    break;
+
+                case DELETE_DOCUMENT:
+                    handleDeleteDocument(socketSession, message, rootObject, legacyDocumentId);
+                    break;
+
                 default:
                     if (isOperationType(rawType)) {
                         handleOperation(socketSession, rawType, message, rootObject, legacyDocumentId);
@@ -175,6 +191,7 @@ public class SessionManager {
 
     public void shutdown() {
         cleanupExecutor.shutdownNow();
+        persistExecutor.shutdownNow();
     }
 
     private void restorePersistedSessions() {
@@ -446,9 +463,91 @@ public class SessionManager {
         outbound.put("sequence", sequence);
 
         sender.markDelivered(sequence);
-        databaseManager.saveSession(session);
+        // Save asynchronously so the broadcast to other clients is never blocked by disk I/O.
+        persistExecutor.submit(() -> databaseManager.saveSession(session));
 
         broadcastToOthers(session, context.userId(), outbound, sequence);
+    }
+
+    private void handleRenameDocument(javax.websocket.Session socketSession,
+                                      Message message,
+                                      ObjectNode rootObject,
+                                      String legacyDocumentId) {
+        ResolvedContext context = resolveContext(socketSession, message, legacyDocumentId);
+        if (context == null) {
+            sendError(socketSession, null, "RENAME_DOCUMENT missing session or user context");
+            return;
+        }
+
+        Session session = sessions.get(context.sessionId());
+        if (session == null) {
+            sendError(socketSession, context.sessionId(), "Session does not exist");
+            return;
+        }
+
+        UserSession sender = session.getUser(context.userId());
+        if (sender == null || sender.getRole() == UserSession.Role.VIEWER) {
+            sendError(socketSession, context.sessionId(), "Permission denied: viewer cannot rename");
+            return;
+        }
+
+        String documentId = session.getDocumentId();
+        String newName = rootObject.has("newName") ? rootObject.get("newName").asText() : "Untitled";
+
+        Document doc = session.getDocument();
+        if (doc != null) {
+            doc.setName(newName);
+            databaseManager.updateDocument(doc);
+        }
+
+        ObjectNode renameMessage = mapper.createObjectNode();
+        renameMessage.put("type", "DOCUMENT_RENAMED");
+        renameMessage.put("documentId", documentId);
+        renameMessage.put("newName", newName);
+
+        for (UserSession user : session.getUsers()) {
+            if (user.isConnected()) {
+                sendMessage(user.getSocketSession(), renameMessage);
+            }
+        }
+    }
+
+    private void handleDeleteDocument(javax.websocket.Session socketSession,
+                                      Message message,
+                                      ObjectNode rootObject,
+                                      String legacyDocumentId) {
+        ResolvedContext context = resolveContext(socketSession, message, legacyDocumentId);
+        if (context == null) {
+            sendError(socketSession, null, "DELETE_DOCUMENT missing session or user context");
+            return;
+        }
+
+        Session session = sessions.get(context.sessionId());
+        if (session == null) {
+            sendError(socketSession, context.sessionId(), "Session does not exist");
+            return;
+        }
+
+        UserSession sender = session.getUser(context.userId());
+        if (sender == null || sender.getRole() == UserSession.Role.VIEWER) {
+            sendError(socketSession, context.sessionId(), "Permission denied: viewer cannot delete");
+            return;
+        }
+
+        String documentId = session.getDocumentId();
+
+        databaseManager.deleteDocument(documentId);
+        sessions.remove(context.sessionId());
+
+        ObjectNode deleteMessage = mapper.createObjectNode();
+        deleteMessage.put("type", "DOCUMENT_DELETED");
+        deleteMessage.put("documentId", documentId);
+
+        for (UserSession user : session.getUsers()) {
+            if (user.isConnected()) {
+                sendMessage(user.getSocketSession(), deleteMessage);
+            }
+        }
     }
 
     private void replayOperationsModern(Session session,

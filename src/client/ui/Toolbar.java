@@ -24,8 +24,12 @@ public class Toolbar extends JPanel {
     private final JButton importButton = new JButton("Import .txt");
     private final JButton exportButton = new JButton("Export .txt");
 
+    private final JButton renameButton = new JButton("Rename Doc");
+    private final JButton deleteButton = new JButton("Delete Doc");
+
     public Toolbar() {
         super(new FlowLayout(FlowLayout.LEFT, 8, 8));
+        setPreferredSize(new java.awt.Dimension(0, 80));
 
         add(new JLabel("User:"));
         add(userField);
@@ -47,6 +51,9 @@ public class Toolbar extends JPanel {
 
         add(importButton);
         add(exportButton);
+
+        add(renameButton);
+        add(deleteButton);
     }
 
     public JTextField getUserField() {
@@ -91,5 +98,13 @@ public class Toolbar extends JPanel {
 
     public JButton getExportButton() {
         return exportButton;
+    }
+
+    public JButton getRenameButton() {
+        return renameButton;
+    }
+
+    public JButton getDeleteButton() {
+        return deleteButton;
     }
 }

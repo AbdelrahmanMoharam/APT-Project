@@ -22,6 +22,8 @@ public enum MessageType {
     ERROR,
     SYNC_STATE,
     LEGACY_JOIN,
+    RENAME_DOCUMENT,
+    DELETE_DOCUMENT,
     UNKNOWN;
 
     public static MessageType fromWire(String rawType) {
@@ -75,6 +77,10 @@ public enum MessageType {
                 return SYNC_STATE;
             case "JOIN":
                 return LEGACY_JOIN;
+            case "RENAME_DOCUMENT":
+                return RENAME_DOCUMENT;
+            case "DELETE_DOCUMENT":
+                return DELETE_DOCUMENT;
             default:
                 return UNKNOWN;
         }

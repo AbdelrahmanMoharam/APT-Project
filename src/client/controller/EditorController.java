@@ -32,7 +32,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.swing.Timer;
 
 public class EditorController implements WebSocketClient.Listener {
 
@@ -53,11 +55,21 @@ public class EditorController implements WebSocketClient.Listener {
     private volatile String copiedBlockId;
     private volatile List<BlockCRDT.CharacterAtom> copiedBlockContent = List.of();
 
+    // Debounce rapid remote renders: coalesce back-to-back operations into one repaint.
+    private final AtomicBoolean pendingRemoteRender = new AtomicBoolean(false);
+    private Timer remoteRenderDebounce; // initialised in constructor after ui is set
+
     public EditorController(EditorUI ui, String serverEndpoint) {
         this.ui = ui;
         this.socketClient = new WebSocketClient(this);
         this.document = new Document("local-document", "Untitled");
         this.undoRedoManager = new UndoRedoManager();
+        // ui is now set — safe to create the timer that references it.
+        this.remoteRenderDebounce = new Timer(16, e -> {
+            pendingRemoteRender.set(false);
+            renderDocumentKeepingCaret(ui.getTextPane().getCaretPosition());
+        });
+        this.remoteRenderDebounce.setRepeats(false);
 
         wireUiActions();
 
@@ -98,6 +110,28 @@ public class EditorController implements WebSocketClient.Listener {
 
         toolbar.getImportButton().addActionListener(event -> importDocument());
         toolbar.getExportButton().addActionListener(event -> exportDocument());
+
+        toolbar.getRenameButton().addActionListener(event -> {
+            if (currentSessionId != null && socketClient.isConnected() && editorMode) {
+                String newName = javax.swing.JOptionPane.showInputDialog(ui.getTextPane(), "Enter new document name:", document.getName());
+                if (newName != null && !newName.trim().isEmpty()) {
+                    socketClient.renameDocument(currentSessionId, newName.trim());
+                }
+            } else {
+                ui.showError("You must be an editor in an active session to rename the document.");
+            }
+        });
+
+        toolbar.getDeleteButton().addActionListener(event -> {
+            if (currentSessionId != null && socketClient.isConnected() && editorMode) {
+                int confirm = javax.swing.JOptionPane.showConfirmDialog(ui.getTextPane(), "Are you sure you want to delete this document?", "Delete Document", javax.swing.JOptionPane.YES_NO_OPTION);
+                if (confirm == javax.swing.JOptionPane.YES_OPTION) {
+                    socketClient.deleteDocument(currentSessionId);
+                }
+            } else {
+                ui.showError("You must be an editor in an active session to delete the document.");
+            }
+        });
 
         wireTextInput(ui.getTextPane());
     }
@@ -181,9 +215,21 @@ public class EditorController implements WebSocketClient.Listener {
 
                 if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
                     e.consume();
+                    System.out.println("[DEBUG] BACKSPACE pressed, editorMode=" + editorMode + ", suppressLocalInput=" + suppressLocalInput);
+                    if (deleteSelectedWholeBlocks()) {
+                        System.out.println("[DEBUG] deleteSelectedWholeBlocks returned true, returning early");
+                        return;
+                    }
+                    System.out.println("[DEBUG] deleteSelectedWholeBlocks returned false, calling deleteBeforeCaret");
                     deleteBeforeCaret();
                 } else if (e.getKeyCode() == KeyEvent.VK_DELETE) {
                     e.consume();
+                    System.out.println("[DEBUG] DELETE pressed, editorMode=" + editorMode + ", suppressLocalInput=" + suppressLocalInput);
+                    if (deleteSelectedWholeBlocks()) {
+                        System.out.println("[DEBUG] deleteSelectedWholeBlocks returned true, returning early");
+                        return;
+                    }
+                    System.out.println("[DEBUG] deleteSelectedWholeBlocks returned false, calling deleteAtCaret");
                     deleteAtCaret();
                 } else if (e.getKeyCode() == KeyEvent.VK_ENTER) {
                     e.consume();
@@ -349,6 +395,92 @@ public class EditorController implements WebSocketClient.Listener {
 
         applyOperationLocally(op, true, true, caret);
     }
+
+    private boolean deleteSelectedWholeBlocks() {
+        int selectionStart = ui.getTextPane().getSelectionStart();
+        int selectionEnd   = ui.getTextPane().getSelectionEnd();
+
+        if (selectionEnd <= selectionStart) {
+            return false;
+        }
+
+        List<Block> blocks = document.getBlockCRDT().getVisibleBlocks();
+        if (blocks.isEmpty()) {
+            return false;
+        }
+
+        CaretLocation startLocation = resolveCaretLocation(selectionStart);
+        CaretLocation endLocation   = resolveCaretLocation(selectionEnd);
+
+        int firstBlockIndex = startLocation.blockIndex();
+        int lastBlockIndex  = endLocation.blockIndex();
+
+        // Determine which blocks are fully selected
+        int firstFullySelected = firstBlockIndex;
+        int lastFullySelected  = lastBlockIndex;
+
+        if (startLocation.offsetInBlock() > 0) {
+            firstFullySelected = firstBlockIndex + 1;   // first block is only partially selected
+        }
+
+        if (endLocation.offsetInBlock() > 0) {
+            int lastBlockLength = endLocation.block().getCharTree().getVisibleNodesInOrder().size();
+            if (endLocation.offsetInBlock() < lastBlockLength) {
+                lastFullySelected = lastBlockIndex - 1; // last block is only partially selected
+            }
+            // If caret sits exactly at the end of the last block, include it.
+        }
+
+        // No fully-selected blocks
+        if (firstFullySelected > lastFullySelected) {
+            return false;
+        }
+
+        int blocksToDelete = lastFullySelected - firstFullySelected + 1;
+        List<Operation> operations = new ArrayList<>();
+
+        if (blocksToDelete >= blocks.size()) {
+            // Every block is selected — keep block 0 alive but clear its content,
+            // then delete all other blocks.
+            Block first = blocks.get(0);
+            List<Node> firstNodes = new ArrayList<>(first.getCharTree().getVisibleNodesInOrder());
+            for (Node node : firstNodes) {
+                operations.add(new DeleteOp(
+                        currentSessionId,
+                        currentUserId,
+                        System.currentTimeMillis(),
+                        first.getBlockId(),
+                        node.getId(),
+                        normalizeParent(node.getParentId()),
+                        node.getValue(),
+                        node.isBold(),
+                        node.isItalic()));
+            }
+            // Delete all blocks except block 0, from last to first so indices stay valid.
+            for (int index = blocks.size() - 1; index >= 1; index--) {
+                operations.add(Operation.BlockOp.delete(
+                        currentSessionId,
+                        currentUserId,
+                        System.currentTimeMillis(),
+                        blocks.get(index).getBlockId(),
+                        index));
+            }
+        } else {
+            // Normal case: delete only the fully-selected blocks.
+            for (int index = lastFullySelected; index >= firstFullySelected; index--) {
+                operations.add(Operation.BlockOp.delete(
+                        currentSessionId,
+                        currentUserId,
+                        System.currentTimeMillis(),
+                        blocks.get(index).getBlockId(),
+                        index));
+            }
+        }
+
+        applyBulkOperationsLocally(operations, true, true, 0);
+        return true;
+    }
+
 
     private void splitBlockAtCaret() {
         int caret = ui.getTextPane().getCaretPosition();
@@ -1181,14 +1313,16 @@ public class EditorController implements WebSocketClient.Listener {
             return;
         }
 
-        UndoRedoManager.UndoableAction action = buildUndoAction(operation);
+        // Apply directly — do NOT track remote ops in the local undo stack.
+        // Building undo snapshots for every incoming character is very expensive.
         operation.apply(document);
 
-        if (action != null) {
-            undoRedoManager.recordAction(action);
-        }
-
-        SwingUtilities.invokeLater(() -> renderDocumentKeepingCaret(ui.getTextPane().getCaretPosition()));
+        // Debounce: schedule one render per burst of incoming operations (16 ms ~ 1 frame).
+        SwingUtilities.invokeLater(() -> {
+            if (pendingRemoteRender.compareAndSet(false, true)) {
+                remoteRenderDebounce.restart();
+            }
+        });
     }
 
     @Override
@@ -1241,6 +1375,27 @@ public class EditorController implements WebSocketClient.Listener {
         SwingUtilities.invokeLater(() -> {
             ui.setStatus("Error: " + message);
             ui.showError(message);
+        });
+    }
+
+    @Override
+    public void onDocumentDeleted(String documentId) {
+        SwingUtilities.invokeLater(() -> {
+            ui.setEditorMode(false);
+            ui.showInfo("Document has been deleted");
+            ui.getTextPane().setText("");
+            ui.setTitle("Untitled");
+            currentSessionId = null;
+            socketClient.disconnect();
+        });
+    }
+
+    @Override
+    public void onDocumentRenamed(String documentId, String newName) {
+        SwingUtilities.invokeLater(() -> {
+            document.setName(newName);
+            ui.setTitle(newName);
+            ui.getToolbar().getTitleField().setText(newName);
         });
     }
 

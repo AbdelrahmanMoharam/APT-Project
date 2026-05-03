@@ -92,6 +92,21 @@ public class WebSocketClient {
         sendNode(root);
     }
 
+    public void deleteDocument(String docId) {
+        ObjectNode root = mapper.createObjectNode();
+        root.put("type", "DELETE_DOCUMENT");
+        root.put("documentId", docId);
+        sendNode(root);
+    }
+
+    public void renameDocument(String docId, String newName) {
+        ObjectNode root = mapper.createObjectNode();
+        root.put("type", "RENAME_DOCUMENT");
+        root.put("documentId", docId);
+        root.put("newName", newName);
+        sendNode(root);
+    }
+
     public void sendOperation(Operation operation) {
         if (operation == null) {
             return;
@@ -152,6 +167,12 @@ public class WebSocketClient {
                     break;
                 case "ERROR":
                     handleError(root);
+                    break;
+                case "DOCUMENT_DELETED":
+                    listener.onDocumentDeleted(root.path("documentId").asText());
+                    break;
+                case "DOCUMENT_RENAMED":
+                    listener.onDocumentRenamed(root.path("documentId").asText(), root.path("newName").asText());
                     break;
                 default:
                     Operation operation = Operation.fromNetwork(root);
@@ -299,6 +320,10 @@ public class WebSocketClient {
         void onUserLeft(String userId);
 
         void onError(String message);
+
+        void onDocumentDeleted(String documentId);
+
+        void onDocumentRenamed(String documentId, String newName);
     }
 
     public record SessionInfo(String sessionId,

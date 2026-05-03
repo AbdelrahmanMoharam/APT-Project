@@ -209,19 +209,61 @@ public class EditorUI {
         StyledDocument styled = textPane.getStyledDocument();
 
         try {
+            // Disable firing of change events during bulk insert for massive speed-up.
             styled.remove(0, styled.getLength());
 
             List<Block> blocks = document.getBlockCRDT().getVisibleBlocks();
             for (int b = 0; b < blocks.size(); b++) {
                 List<Node> nodes = blocks.get(b).getCharTree().getVisibleNodesInOrder();
-                for (Node node : nodes) {
-                    SimpleAttributeSet attrs = new SimpleAttributeSet();
-                    StyleConstants.setBold(attrs, node.isBold());
-                    StyleConstants.setItalic(attrs, node.isItalic());
-                    styled.insertString(styled.getLength(), String.valueOf(node.getValue()), attrs);
+
+                if (nodes.isEmpty()) {
+                    if (b < blocks.size() - 1) {
+                        styled.insertString(styled.getLength(), "\n", null);
+                    }
+                    continue;
                 }
+
+                // Build a plain-text string for the whole block in one shot.
+                StringBuilder sb = new StringBuilder(nodes.size());
+                for (Node node : nodes) {
+                    sb.append(node.getValue());
+                }
+
+                int blockStart = styled.getLength();
+                // Insert with an explicit EMPTY attribute set so we never inherit stale
+                // bold/italic attributes from the previous render cycle.
+                SimpleAttributeSet plain = new SimpleAttributeSet();
+                StyleConstants.setBold(plain, false);
+                StyleConstants.setItalic(plain, false);
+                styled.insertString(blockStart, sb.toString(), plain);
+
+                // Apply bold/italic formatting in runs. Use replace=true so the run's
+                // attrs fully replace (not merge with) the plain attributes above.
+                int runStart = 0;
+                boolean runBold   = nodes.get(0).isBold();
+                boolean runItalic = nodes.get(0).isItalic();
+
+                for (int i = 1; i <= nodes.size(); i++) {
+                    boolean curBold   = (i < nodes.size()) && nodes.get(i).isBold();
+                    boolean curItalic = (i < nodes.size()) && nodes.get(i).isItalic();
+
+                    boolean runEnds = (i == nodes.size())
+                                   || (curBold != runBold)
+                                   || (curItalic != runItalic);
+                    if (runEnds) {
+                        SimpleAttributeSet attrs = new SimpleAttributeSet();
+                        StyleConstants.setBold(attrs, runBold);
+                        StyleConstants.setItalic(attrs, runItalic);
+                        // replace=true: completely overwrite attrs for this span
+                        styled.setCharacterAttributes(blockStart + runStart, i - runStart, attrs, true);
+                        runStart  = i;
+                        runBold   = curBold;
+                        runItalic = curItalic;
+                    }
+                }
+
                 if (b < blocks.size() - 1) {
-                    styled.insertString(styled.getLength(), "\n", null);
+                    styled.insertString(styled.getLength(), "\n", plain);
                 }
             }
 
@@ -288,5 +330,9 @@ public class EditorUI {
             users.add(activeUsersModel.get(i));
         }
         return users;
+    }
+
+    public void setTitle(String title) {
+        frame.setTitle("APT Collaborative Client - " + title);
     }
 }

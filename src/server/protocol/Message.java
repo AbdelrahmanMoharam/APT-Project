@@ -13,6 +13,7 @@ public class Message {
     private String documentId;
     private String role;
     private String code;
+    private String newName;
     private Integer position;
     private JsonNode payload;
     private JsonNode op;
